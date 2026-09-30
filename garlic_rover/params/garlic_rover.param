@@ -149,6 +149,8 @@ GPS1_MB_TYPE,1
 # VCU_V_MAX,1.5
 # VCU_W_MAX,1.0
 # VCU_REV,0
+# 调试量 VCU_CMD_V/W、VCU_V/W 上报地面站的频率(Hz), 0=不发 (4G 省流量); 台架调试时设 5
+# VCU_DBG_HZ,0
 # RTK 要求: 0=不检查, 1=浮点解或固定解, 2=仅固定解
 # VCU_RTK_REQ,2
 # RTK 不满足要求持续多久(ms)后停车

@@ -29,4 +29,4 @@
 - 从 ArduPilot master 移植 X-MAV AP-H743v3 的板级定义、板号（1220）和 Bootloader。
 - 车端 CAN 桥接脚本、基础参数和文档放在 `garlic_rover/` 目录。
 
-> 台架测试时如果临时改过 `VCU_RTK_REQ`、`VCU_FB_TMO`、`FS_CRASH_CHECK`、`LOG_DISARMED`、`FENCE_ENABLE`，上车前务必改回 2、200、1、0、1。
+> 台架测试时如果临时改过 `VCU_RTK_REQ`、`VCU_FB_TMO`、`FS_CRASH_CHECK`、`LOG_DISARMED`、`FENCE_ENABLE`、`VCU_DBG_HZ`，上车前务必改回 2、200、1、0、1、0。

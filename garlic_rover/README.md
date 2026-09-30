@@ -64,7 +64,7 @@
   - VCU 急停；
   - VCU 报故障；
   - RTK 没有固定解（掉解超过 3 秒）。
-- **上报状态**：以 5 Hz 发 `NAMED_VALUE_FLOAT`（`VCU_OK`、`VCU_MODE`、`VCU_V`、`VCU_SOC` 等）给地面站。
+- **上报状态**：以 5 Hz 发 `NAMED_VALUE_FLOAT`（`VCU_OK`、`VCU_MODE`、`VCU_FAULT`、`VCU_BATV`、`VCU_SOC`）给地面站。调试量 `VCU_CMD_V/W`、`VCU_V/W` 默认不发（4G 按流量计费），调试时把 `VCU_DBG_HZ` 设为 5。
 - **板载日志**：记录 `VCU` 消息，50 Hz，包含指令 v/ω、底盘实际 v/ω、转角、模式、故障码、定位状态。
 - 协议细节见 [CAN通信协议.md](docs/CAN通信协议.md)。**VCU 协议有变化时只改这个脚本，不用改固件。**
 
@@ -76,6 +76,7 @@
 | `VCU_FB_TMO` | 200 | VCU 反馈超时（ms），0 = 不检查（仅台架调试用） |
 | `VCU_V_MAX` / `VCU_W_MAX` | 1.5 / 1.0 | 下发线速度 / 角速度限幅（m/s、rad/s） |
 | `VCU_REV` | 0 | 是否允许倒车 |
+| `VCU_DBG_HZ` | 0 | 调试量 `VCU_CMD_V/W`、`VCU_V/W` 上报地面站的频率（Hz），0 = 不发；板载日志不受影响 |
 | `VCU_RTK_REQ` | 2 | RTK 要求：0 不检查，1 浮点解或固定解，2 只接受固定解 |
 | `VCU_RTK_TMO` | 3000 | RTK 不满足要求多久（ms）后停车 |
 
@@ -108,7 +109,7 @@
 2. 下载日志，对比 `THR.DesSpeed`、`STER.DesTurnRate`（期望值）和 `VCU.V`、`VCU.W`（底盘实际值）。实际值跟不上期望值时，先让底盘方调 VCU 的闭环。
 3. 然后在 RTK 固定解下，逐步调上表"压线精度"一行的参数，看 `NTUN.XTrack`（横向误差）。
 
-> 台架测试时如果临时改过 `VCU_RTK_REQ`、`VCU_FB_TMO`、`FS_CRASH_CHECK`、`LOG_DISARMED`、`FENCE_ENABLE`，**上车前务必改回** 2、200、1、0、1。
+> 台架测试时如果临时改过 `VCU_RTK_REQ`、`VCU_FB_TMO`、`FS_CRASH_CHECK`、`LOG_DISARMED`、`FENCE_ENABLE`、`VCU_DBG_HZ`，**上车前务必改回** 2、200、1、0、1、0。
 
 ## 6. 自己编译
 
