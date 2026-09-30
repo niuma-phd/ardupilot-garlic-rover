@@ -10,8 +10,8 @@
 | `vcu_can.lua` | 车端脚本：放到 SD 卡的 `APM/scripts/` |
 | `garlic_rover.param` | 基础参数：Mission Planner → 全部参数表 → 加载 → 写入 → 重启，**加载、写入两遍** |
 | `README.md` | **配置与调参说明**（先看这个） |
-| `CAN通信协议.md` | 与底盘 VCU 的 CAN 协议（CAN2，500 kbit/s） |
-| `台架测试手册.md` | 刷机、配置、CAN 和 RTK 的逐步测试方法，写到 Mission Planner 按钮级别 |
+| `CAN-protocol.md` | CAN通信协议：与底盘 VCU 的 CAN 协议（CAN2，500 kbit/s） |
+| `bench-test-manual.md` | 台架测试手册：刷机、配置、CAN 和 RTK 的逐步测试方法，写到 Mission Planner 按钮级别 |
 | `garlic-rover-@TAG@-X-MAV-AP-H743v3.zip` | 以上全部文件打包 |
 
 ## 快速上手

@@ -74,7 +74,10 @@ jobs:
           cp "$bl"                         "$out/"
           cp garlic_rover/scripts/vcu_can.lua        "$out/"
           cp garlic_rover/params/garlic_rover.param  "$out/"
-          cp garlic_rover/README.md garlic_rover/docs/*.md "$out/"
+          cp garlic_rover/README.md "$out/"
+          # GitHub strips non-ASCII characters from release asset names: use ASCII file names
+          cp "garlic_rover/docs/CAN通信协议.md"   "$out/CAN-protocol.md"
+          cp "garlic_rover/docs/台架测试手册.md" "$out/bench-test-manual.md"
           (cd dist && python3 -c "import shutil,sys; shutil.make_archive(sys.argv[1], 'zip', '.', sys.argv[1])" "$stem")
           ls -la "$out" dist
 
@@ -114,7 +117,12 @@ jobs:
           for f in "${files[@]}"; do
             n="$(basename "$f")"
             [[ -n "${seen[$n]:-}" ]] && continue
-            seen[$n]=1; upload+=("$f")
+            seen[$n]=1
+            case "$n" in   # "file#label": the label is what the release page shows
+              CAN-protocol.md)      upload+=("$f#CAN-protocol.md（CAN通信协议）") ;;
+              bench-test-manual.md) upload+=("$f#bench-test-manual.md（台架测试手册）") ;;
+              *)                    upload+=("$f") ;;
+            esac
           done
           gh release create "$tag" "${upload[@]}" \
             --repo "$GITHUB_REPOSITORY" \

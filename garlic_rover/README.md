@@ -32,7 +32,7 @@
 | `X-MAV-AP-H743v3_bl.bin` | Bootloader。板子第一次装 ArduPilot 时用 DFU 刷（见台架测试手册 A0） |
 | `vcu_can.lua` | 车端 Lua 脚本，放到 SD 卡的 `APM/scripts/` |
 | `garlic_rover.param` | 基础参数，用 Mission Planner 加载 |
-| `README.md`（本文件）、`CAN通信协议.md`、`台架测试手册.md` | 配置说明、与 VCU 的 CAN 协议、台架测试步骤 |
+| `README.md`（本文件）、`CAN-protocol.md`、`bench-test-manual.md` | 配置说明、与 VCU 的 CAN 协议（即 `docs/CAN通信协议.md`）、台架测试步骤（即 `docs/台架测试手册.md`）。GitHub 不允许附件名含中文，所以 Release 里用英文文件名 |
 | `garlic-rover-<版本>-X-MAV-AP-H743v3.zip` | 以上全部文件的打包 |
 
 ## 3. 配置步骤（概要）
