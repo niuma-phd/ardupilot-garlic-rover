@@ -108,8 +108,8 @@ FENCE_TYPE,4
 FENCE_ACTION,2
 
 # ---------- 解锁检查 ----------
-# 无遥控时跳过 RC 检查: ARMING_SKIPCHK 为位掩码, 按 QGC 参数说明勾选 "RC Channels"
-# ARMING_SKIPCHK,64
+# 飞控不接遥控接收机 (遥控直接接 VCU): 跳过 RC 检查. 64 = AP_Arming::Check::RC, 其他解锁检查不受影响
+ARMING_SKIPCHK,64
 ARMING_NEED_LOC,1
 # 安全开关: AP-H743v3 没有安全开关, 设 0 表示上电即可解锁 (仍需通过各项解锁检查)  [重启]
 BRD_SAFETY_DEFLT,0
