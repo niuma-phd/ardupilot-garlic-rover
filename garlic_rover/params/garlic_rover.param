@@ -83,8 +83,10 @@ CRUISE_THROTTLE,50
 # 1=RTL 2=HOLD, 农田作业建议 HOLD
 FS_ACTION,2
 FS_TIMEOUT,1.5
-# 地面站断链保护
-FS_GCS_ENABLE,1
+# 地面站断链保护: 2 = Auto 模式下断链继续跑完航线, 其他模式按 FS_ACTION 停车.
+# 与地面站断线告警"车辆仍在按航线自动作业"一致; 4G 信号时好时坏, 设 1 会频繁停车.
+# 作业中的安全由电子围栏、VCU/RTK 检查 (vcu_can.lua)、陷车检测和车上急停保证.
+FS_GCS_ENABLE,2
 FS_GCS_TIMEOUT,5
 # 若没有 ArduPilot 端遥控接收机(遥控直接接 VCU), 关闭遥控失控检测
 FS_THR_ENABLE,0
