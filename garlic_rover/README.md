@@ -99,7 +99,7 @@
 | 加减速 | `ATC_ACCEL_MAX`、`ATC_DECEL_MAX`、`WP_ACCEL`、`WP_JERK` | 下发的 v 变化有多快，要和 VCU 的执行能力匹配 |
 | 转向限制 | `ATC_STR_RAT_MAX`、`ATC_STR_ACC_MAX`、`ATC_STR_DEC_MAX`、`ATC_TURN_MAX_G` | ω 的上限和变化率，横向加速度上限 |
 | 压线精度 | `PSC_POS_P`、`PSC_VEL_P/I/D`、`WP_RADIUS` | 偏离航线后纠回来的力度；到点判定半径 |
-| 定位 | `GPS1_TYPE`（UM982 设 25）、`GPS1_POS_X/Y/Z` | 双天线定向；天线相对飞控的位置要量准 |
+| 定位 | `GPS1_MB_OFS_X/Y/Z`、`GPS1_POS_X/Y/Z`（`GPS1_TYPE=25`、`GPS1_MB_TYPE=1` 已设） | 双天线定向：主天线相对从天线、主天线相对飞控的位置，要量准 |
 | CAN | `CAN_P2_BITRATE` | 和 VCU 一致（默认 500000） |
 | 保护 | `FS_CRASH_CHECK`、`CRASH_*`、`FS_GCS_*`、`FENCE_*` | 陷车、地面站失联、越界时停车 |
 
