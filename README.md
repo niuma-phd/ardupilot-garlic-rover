@@ -1,3 +1,9 @@
+> **This fork: garlic seeder Rover firmware (大蒜播种车 Rover 固件)**
+>
+> Branch **`garlic-rover-4.7`** = ArduPilot **Rover-4.7.1** + a few small, separately committed changes for an Ackermann garlic seeder that sends target linear/angular velocity to its chassis VCU over CAN (X-MAV AP-H743v3 flight controller).
+> See [`garlic_rover/README.md`](garlic_rover/README.md) (Chinese) for the change list, configuration and tuning; prebuilt firmware, parameters and scripts are on the [Releases](../../releases) page.
+> Everything below this box is the unmodified upstream ArduPilot README.
+
 # ArduPilot Project
 
 [![Discord](https://img.shields.io/discord/674039678562861068.svg)](https://ardupilot.org/discord)
