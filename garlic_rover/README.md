@@ -108,7 +108,7 @@
 2. 下载日志，对比 `THR.DesSpeed`、`STER.DesTurnRate`（期望值）和 `VCU.V`、`VCU.W`（底盘实际值）。实际值跟不上期望值时，先让底盘方调 VCU 的闭环。
 3. 然后在 RTK 固定解下，逐步调上表"压线精度"一行的参数，看 `NTUN.XTrack`（横向误差）。
 
-> 台架测试时如果临时改过 `VCU_RTK_REQ`、`VCU_FB_TMO`、`FS_CRASH_CHECK`、`LOG_DISARMED`，**上车前务必改回** 2、200、1、0。
+> 台架测试时如果临时改过 `VCU_RTK_REQ`、`VCU_FB_TMO`、`FS_CRASH_CHECK`、`LOG_DISARMED`、`FENCE_ENABLE`，**上车前务必改回** 2、200、1、0、1。
 
 ## 6. 自己编译
 

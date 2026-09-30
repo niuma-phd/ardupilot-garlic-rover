@@ -97,10 +97,15 @@ CRASH_VEL_MIN,0.08
 CRASH_TIMEOUT,3
 FS_EKF_ACTION,1
 
-# ---------- 电子围栏 (地块边界), 画好边界后再把 FENCE_ENABLE 设 1 ----------
+# ---------- 电子围栏 (地块边界) ----------
+# 地面站要求先上传多边形围栏才能开始作业, 飞控必须启用围栏才会执行.
+# 未上传围栏时解锁被拒绝 (PreArm: Polygon fence(s) invalid), 这是期望的行为.
+# 台架测试时可临时设 0, 见台架测试手册"测完必须恢复的参数".
+FENCE_ENABLE,1
+# 4 = 只用多边形. Rover 默认 6 还包括以起点为圆心、FENCE_RADIUS (默认 300 m) 的圆形围栏, 大地块会误停车
+FENCE_TYPE,4
 # 越界动作 2=HOLD
 FENCE_ACTION,2
-FENCE_ENABLE,0
 
 # ---------- 解锁检查 ----------
 # 无遥控时跳过 RC 检查: ARMING_SKIPCHK 为位掩码, 按 QGC 参数说明勾选 "RC Channels"
