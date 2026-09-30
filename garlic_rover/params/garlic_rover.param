@@ -1,0 +1,138 @@
+# 大蒜播种车 Rover 4.7.1 / X-MAV AP-H743v3 基础参数 (Mission Planner / MAVProxy 格式: 名称,值)
+# 导入方式: Mission Planner "全部参数表 -> 加载"; 或 MAVProxy "param load garlic_rover.param"
+# 数值为起始值, 实车需按 garlic_rover/README.md 的"调参"一节调整.
+# 带 [重启] 的参数修改后需重启飞控.
+# 必须加载两遍: SCR_ENABLE、CAN_P2_DRIVER 是"总开关", 为 0 时同组的 SCR_HEAP_SIZE、CAN_P2_BITRATE 被隐藏,
+#   第一遍会提示 missing. 第一遍写入并重启后再加载写入一遍即可.
+
+# ---------- 车型 ----------
+FRAME_CLASS,1
+# 阿克曼: 禁止原地转向
+WP_PIVOT_ANGLE,0
+# 上电默认 HOLD(4), 不用默认的 MANUAL
+INITIAL_MODE,4
+# 最小转弯半径(m), 按底盘实测填写
+TURN_RADIUS,3.0
+
+# ---------- 脚本 + CAN (CAN1 保留给 DroneCAN, CAN2 接 VCU) ----------
+# [重启]
+SCR_ENABLE,1
+SCR_HEAP_SIZE,204800
+CAN_P1_DRIVER,1
+CAN_D1_PROTOCOL,1
+# [重启] CAN2 -> 驱动2 -> 脚本协议(10)
+CAN_P2_DRIVER,2
+CAN_D2_PROTOCOL,10
+# [重启] 与 VCU 一致: 250000 / 500000
+CAN_P2_BITRATE,500000
+
+# ---------- 航点导航 ----------
+# 作业速度(m/s)
+WP_SPEED,0.8
+CRUISE_SPEED,0.8
+# 到点判定半径(m), 有 RTK 时可取 0.3~0.5
+WP_RADIUS,0.5
+WP_ACCEL,0.5
+WP_JERK,1.0
+# 速度上限(m/s), 显式设置; 0 表示由 CRUISE_* 推算, 与 VCU 不相符. 与 VCU_V_MAX 保持一致
+SPEED_MAX,1.5
+# 返航速度, 0=用 WP_SPEED
+RTL_SPEED,0
+# 任务结束后: 0=HOLD
+MIS_DONE_BEHAVE,0
+# 航点存 SD 卡(KB), 约 15 字节/航点, 64KB 约 4000 点  [重启]
+BRD_SD_MISSION,64
+
+# ---------- 控制器限幅 (决定下发给 VCU 的 v/w 的范围和变化率) ----------
+ATC_ACCEL_MAX,0.5
+ATC_DECEL_MAX,0.8
+# 角速度上限(deg/s)
+ATC_STR_RAT_MAX,45
+# 角加速度上限(deg/s/s), 限制 w 的变化率, 避免转向机构跟不上
+ATC_STR_ACC_MAX,60
+ATC_STR_DEC_MAX,60
+# 最大横向加速度(G), 低速农机取小值
+ATC_TURN_MAX_G,0.15
+
+# ---------- 占位输出 (ArduPilot 需要转向/油门通道, 实际不接线, 由 VCU 执行) ----------
+SERVO1_FUNCTION,26
+SERVO3_FUNCTION,70
+MOT_SPD_SCA_BASE,0
+MOT_SLEWRATE,0
+
+# ---------- 内部转向/速度 PID: 设为纯前馈, 防止占位输出饱和 ----------
+# 原因: 转向/油门输出不接执行机构, 若保留 P/I, 积分会一直累积到饱和;
+#   转向饱和会置 "转向到极限" 标志, 位置控制器 (AR_PosControl) 据此停止该方向的纠偏, 压线变差;
+#   油门输出还被碰撞检测 (FS_CRASH_CHECK) 使用, 纯前馈时它与期望速度成正比, 判断才可靠.
+# 纯前馈后: 转向输出 = 0.2 x w(rad/s), w 最大 45deg/s=0.785 -> 0.16, 不会饱和
+ATC_STR_RAT_P,0
+ATC_STR_RAT_I,0
+ATC_STR_RAT_D,0
+ATC_STR_RAT_IMAX,0
+ATC_STR_RAT_FF,0.2
+# 油门输出 = v x CRUISE_THROTTLE/100 / CRUISE_SPEED; v 最大 1.5 -> 94%, 不饱和
+# ATC_SPEED_P 允许范围 0.01~2, 取最小值 0.01 (影响可忽略); 关键是 I=0 不累积
+ATC_SPEED_P,0.01
+ATC_SPEED_I,0
+ATC_SPEED_D,0
+ATC_SPEED_IMAX,0
+ATC_SPEED_FF,0
+CRUISE_THROTTLE,50
+
+# ---------- 失控保护 ----------
+# 1=RTL 2=HOLD, 农田作业建议 HOLD
+FS_ACTION,2
+FS_TIMEOUT,1.5
+# 地面站断链保护
+FS_GCS_ENABLE,1
+FS_GCS_TIMEOUT,5
+# 若没有 ArduPilot 端遥控接收机(遥控直接接 VCU), 关闭遥控失控检测
+FS_THR_ENABLE,0
+# 碰撞/卡死检测: 有油门需求但车速 < CRASH_VEL_MIN 持续 CRASH_TIMEOUT 秒 -> HOLD (陷车、VCU 不执行时停车)
+FS_CRASH_CHECK,1
+CRASH_THR_MIN,10
+CRASH_VEL_MIN,0.08
+CRASH_TIMEOUT,3
+FS_EKF_ACTION,1
+
+# ---------- 电子围栏 (地块边界), 画好边界后再把 FENCE_ENABLE 设 1 ----------
+# 越界动作 2=HOLD
+FENCE_ACTION,2
+FENCE_ENABLE,0
+
+# ---------- 解锁检查 ----------
+# 无遥控时跳过 RC 检查: ARMING_SKIPCHK 为位掩码, 按 QGC 参数说明勾选 "RC Channels"
+# ARMING_SKIPCHK,64
+ARMING_NEED_LOC,1
+# 安全开关: AP-H743v3 没有安全开关, 设 0 表示上电即可解锁 (仍需通过各项解锁检查)  [重启]
+BRD_SAFETY_DEFLT,0
+
+# ---------- 串口分配 (AP-H743v3 默认值, 不用改, 仅作接线说明) ----------
+# SERIAL1 (USART2) = MAVLink2 -> 接数传电台 / 4G 模块
+# SERIAL2 (UART4)  = MAVLink2 -> 备用数传
+# SERIAL3 (USART1) = GPS      -> 接 RTK GPS (UM982) , 板上标 GPS 的口
+# SERIAL6 (USART3) = MSP DisplayPort (DJI 图传口, 本车不用)
+# SERIAL7 (UART5)  = RCIN     -> 遥控接收机 (若遥控接 VCU 则此口空闲)
+
+# ---------- 板载 OSD: 本车没有图传, 关闭 ----------
+OSD_TYPE,0
+
+# ---------- 定位 (已定: 双天线定向; 型号待定) ----------
+# 航向只用 GPS 双天线 (2), 不用磁罗盘 (农机上铁件和电机干扰大, 也免去罗盘校准)
+EK3_SRC1_YAW,2
+COMPASS_USE,0
+COMPASS_USE2,0
+COMPASS_USE3,0
+# 型号定了再设: UM982 -> GPS1_TYPE,25 ; 双 F9P 移动基线 -> GPS1_TYPE,17 GPS2_TYPE,18
+# 天线安装位置(m, 相对飞控, 前/右/下为正), 需实测: GPS1_POS_X/Y/Z (双 F9P 另设 GPS2_POS_*)
+
+# ---------- 脚本参数 (首次运行 vcu_can.lua 并重启后才出现) ----------
+# VCU_ENABLE,1
+# VCU_FB_TMO,200
+# VCU_V_MAX,1.5
+# VCU_W_MAX,1.0
+# VCU_REV,0
+# RTK 要求: 0=不检查, 1=浮点解或固定解, 2=仅固定解
+# VCU_RTK_REQ,2
+# RTK 不满足要求持续多久(ms)后停车
+# VCU_RTK_TMO,3000
