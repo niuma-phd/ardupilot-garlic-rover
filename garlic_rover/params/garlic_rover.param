@@ -107,8 +107,11 @@ ARMING_NEED_LOC,1
 # 安全开关: AP-H743v3 没有安全开关, 设 0 表示上电即可解锁 (仍需通过各项解锁检查)  [重启]
 BRD_SAFETY_DEFLT,0
 
-# ---------- 串口分配 (AP-H743v3 默认值, 不用改, 仅作接线说明) ----------
+# ---------- 串口分配 ----------
 # SERIAL1 (USART2) = MAVLink2 -> 接数传电台 / 4G 模块
+# 板子默认 57600, 必须与 4G DTU (EP-D200) 一致, 否则 4G 完全不通
+SERIAL1_BAUD,115
+# 以下为 AP-H743v3 默认值, 不用改, 仅作接线说明
 # SERIAL2 (UART4)  = MAVLink2 -> 备用数传
 # SERIAL3 (USART1) = GPS      -> 接 RTK GPS (UM982) , 板上标 GPS 的口
 # SERIAL6 (USART3) = MSP DisplayPort (DJI 图传口, 本车不用)
