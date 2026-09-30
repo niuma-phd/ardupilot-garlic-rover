@@ -48,6 +48,8 @@ end
 --[[ @Param: VCU_ENABLE  @DisplayName: 启用VCU CAN桥接  @Values: 0:关,1:开 --]]
 local VCU_ENABLE  = bind_add_param("ENABLE", 1, 1)
 -- 参数序号 2 (原 VCU_SRC) 已废弃, 保留空位, 其它参数序号不变
+--[[ @Param: VCU_DBG_HZ  @DisplayName: 调试量(VCU_CMD_V/W, VCU_V/W)上报地面站的频率(Hz), 0=不发. 板载日志不受影响 --]]
+local VCU_DBG_HZ  = bind_add_param("DBG_HZ", 2, 0)
 --[[ @Param: VCU_FB_TMO  @DisplayName: VCU反馈超时(ms), 0=不检查反馈(台架调试用) --]]
 local VCU_FB_TMO  = bind_add_param("FB_TMO", 3, 200)
 --[[ @Param: VCU_V_MAX  @DisplayName: 线速度限幅(m/s) --]]
@@ -211,6 +213,7 @@ end
 ---------------------------------------------------------------------------
 local last_warn_ms = 0
 local last_gcs_ms = 0
+local last_dbg_ms = 0
 
 local function update()
   local now = millis():toint()
@@ -260,18 +263,24 @@ local function update()
                v, w, fb.v, fb.w, fb.steer_deg, clamp(fb.mode, 0, 255), fb.fault_code,
                ok and 1 or 0, fix)
 
-  -- 5Hz 上报地面站
+  -- 5Hz 上报地面站 (客户地面站只用这 5 个值, 4G 按流量计费)
   if now - last_gcs_ms >= 200 then
     last_gcs_ms = now
-    gcs:send_named_float("VCU_CMD_V", v)
-    gcs:send_named_float("VCU_CMD_W", w)
-    gcs:send_named_float("VCU_V", fb.v)
-    gcs:send_named_float("VCU_W", fb.w)
     gcs:send_named_float("VCU_MODE", fb.mode)
     gcs:send_named_float("VCU_FAULT", fb.fault_code)
     gcs:send_named_float("VCU_BATV", fb.bat_v)
     gcs:send_named_float("VCU_SOC", fb.soc)
     gcs:send_named_float("VCU_OK", ok and 1 or 0)
+  end
+
+  -- 调试量: 只在 VCU_DBG_HZ > 0 时上报 (工程师用 Mission Planner 看), 板载日志里已有 50Hz 记录
+  local dbg_hz = VCU_DBG_HZ:get()
+  if dbg_hz > 0 and now - last_dbg_ms >= 1000 / math.min(dbg_hz, 10) then
+    last_dbg_ms = now
+    gcs:send_named_float("VCU_CMD_V", v)
+    gcs:send_named_float("VCU_CMD_W", w)
+    gcs:send_named_float("VCU_V", fb.v)
+    gcs:send_named_float("VCU_W", fb.w)
   end
 
   return update, LOOP_MS

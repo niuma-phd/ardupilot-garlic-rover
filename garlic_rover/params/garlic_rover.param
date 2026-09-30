@@ -83,8 +83,10 @@ CRUISE_THROTTLE,50
 # 1=RTL 2=HOLD, 农田作业建议 HOLD
 FS_ACTION,2
 FS_TIMEOUT,1.5
-# 地面站断链保护
-FS_GCS_ENABLE,1
+# 地面站断链保护: 2 = Auto 模式下断链继续跑完航线, 其他模式按 FS_ACTION 停车.
+# 与地面站断线告警"车辆仍在按航线自动作业"一致; 4G 信号时好时坏, 设 1 会频繁停车.
+# 作业中的安全由电子围栏、VCU/RTK 检查 (vcu_can.lua)、陷车检测和车上急停保证.
+FS_GCS_ENABLE,2
 FS_GCS_TIMEOUT,5
 # 若没有 ArduPilot 端遥控接收机(遥控直接接 VCU), 关闭遥控失控检测
 FS_THR_ENABLE,0
@@ -95,20 +97,28 @@ CRASH_VEL_MIN,0.08
 CRASH_TIMEOUT,3
 FS_EKF_ACTION,1
 
-# ---------- 电子围栏 (地块边界), 画好边界后再把 FENCE_ENABLE 设 1 ----------
+# ---------- 电子围栏 (地块边界) ----------
+# 地面站要求先上传多边形围栏才能开始作业, 飞控必须启用围栏才会执行.
+# 未上传围栏时解锁被拒绝 (PreArm: Polygon fence(s) invalid), 这是期望的行为.
+# 台架测试时可临时设 0, 见台架测试手册"测完必须恢复的参数".
+FENCE_ENABLE,1
+# 4 = 只用多边形. Rover 默认 6 还包括以起点为圆心、FENCE_RADIUS (默认 300 m) 的圆形围栏, 大地块会误停车
+FENCE_TYPE,4
 # 越界动作 2=HOLD
 FENCE_ACTION,2
-FENCE_ENABLE,0
 
 # ---------- 解锁检查 ----------
-# 无遥控时跳过 RC 检查: ARMING_SKIPCHK 为位掩码, 按 QGC 参数说明勾选 "RC Channels"
-# ARMING_SKIPCHK,64
+# 飞控不接遥控接收机 (遥控直接接 VCU): 跳过 RC 检查. 64 = AP_Arming::Check::RC, 其他解锁检查不受影响
+ARMING_SKIPCHK,64
 ARMING_NEED_LOC,1
 # 安全开关: AP-H743v3 没有安全开关, 设 0 表示上电即可解锁 (仍需通过各项解锁检查)  [重启]
 BRD_SAFETY_DEFLT,0
 
-# ---------- 串口分配 (AP-H743v3 默认值, 不用改, 仅作接线说明) ----------
+# ---------- 串口分配 ----------
 # SERIAL1 (USART2) = MAVLink2 -> 接数传电台 / 4G 模块
+# 板子默认 57600, 必须与 4G DTU (EP-D200) 一致, 否则 4G 完全不通
+SERIAL1_BAUD,115
+# 以下为 AP-H743v3 默认值, 不用改, 仅作接线说明
 # SERIAL2 (UART4)  = MAVLink2 -> 备用数传
 # SERIAL3 (USART1) = GPS      -> 接 RTK GPS (UM982) , 板上标 GPS 的口
 # SERIAL6 (USART3) = MSP DisplayPort (DJI 图传口, 本车不用)
@@ -117,14 +127,21 @@ BRD_SAFETY_DEFLT,0
 # ---------- 板载 OSD: 本车没有图传, 关闭 ----------
 OSD_TYPE,0
 
-# ---------- 定位 (已定: 双天线定向; 型号待定) ----------
+# ---------- 定位 (维特智能 WTRTK-982 / UM982 双天线定向) ----------
 # 航向只用 GPS 双天线 (2), 不用磁罗盘 (农机上铁件和电机干扰大, 也免去罗盘校准)
 EK3_SRC1_YAW,2
 COMPASS_USE,0
 COMPASS_USE2,0
 COMPASS_USE3,0
-# 型号定了再设: UM982 -> GPS1_TYPE,25 ; 双 F9P 移动基线 -> GPS1_TYPE,17 GPS2_TYPE,18
-# 天线安装位置(m, 相对飞控, 前/右/下为正), 需实测: GPS1_POS_X/Y/Z (双 F9P 另设 GPS2_POS_*)
+# UM982 双天线 NMEA; 飞控自动下发 UNIHEADINGA/AGRICA 等配置 (GPS_AUTO_CONFIG 保持默认 1), 波特率自动识别
+GPS1_TYPE,25
+# 航向 = 按 GPS1_MB_OFS_* 换算的两天线连线方向 (1 = 使用下面的自定义偏移)
+GPS1_MB_TYPE,1
+# 以下按实测填写 (单位 m, 前/右/下为正), 默认 0 时没有 GPS 航向、解不了锁:
+# GPS1_MB_OFS_X/Y/Z = 主天线 (ANT1) 相对从天线 (ANT2) 的位置.
+#   例: 两天线沿车身前后安装, 主天线在后、从天线在前, 相距 1.0 m -> GPS1_MB_OFS_X,-1.0
+# GPS1_POS_X/Y/Z = 主天线相对飞控的位置
+# 装好后原地转动车身, 确认 HUD 航向与车头方向一致 (差 180 度说明 GPS1_MB_OFS_X 正负号反了)
 
 # ---------- 脚本参数 (首次运行 vcu_can.lua 并重启后才出现) ----------
 # VCU_ENABLE,1
@@ -132,6 +149,8 @@ COMPASS_USE3,0
 # VCU_V_MAX,1.5
 # VCU_W_MAX,1.0
 # VCU_REV,0
+# 调试量 VCU_CMD_V/W、VCU_V/W 上报地面站的频率(Hz), 0=不发 (4G 省流量); 台架调试时设 5
+# VCU_DBG_HZ,0
 # RTK 要求: 0=不检查, 1=浮点解或固定解, 2=仅固定解
 # VCU_RTK_REQ,2
 # RTK 不满足要求持续多久(ms)后停车
