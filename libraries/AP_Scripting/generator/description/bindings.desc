@@ -851,6 +851,8 @@ singleton AC_PosControl method get_accel_target boolean Vector3f'Null
 include APM_Control/AR_AttitudeControl.h depends APM_BUILD_TYPE(APM_BUILD_Rover)
 singleton AR_AttitudeControl depends APM_BUILD_TYPE(APM_BUILD_Rover)
 singleton AR_AttitudeControl method get_srate void float'Ref float'Ref
+singleton AR_AttitudeControl method get_desired_speed float
+singleton AR_AttitudeControl method get_desired_turn_rate float
 
 include AP_Mount/AP_Mount.h
 singleton AP_Mount depends HAL_MOUNT_ENABLED == 1

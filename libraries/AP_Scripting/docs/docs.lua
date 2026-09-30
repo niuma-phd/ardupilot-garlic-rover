@@ -3896,6 +3896,14 @@ AR_AttitudeControl = {}
 ---@return number -- speed slew rate
 function AR_AttitudeControl:get_srate() end
 
+-- return latest desired speed of the rover speed controller in m/s (zero if speed controller not active)
+---@return number
+function AR_AttitudeControl:get_desired_speed() end
+
+-- return latest desired turn rate of the rover steering rate controller in rad/s, clockwise positive (zero if not active)
+---@return number
+function AR_AttitudeControl:get_desired_turn_rate() end
+
 -- copter position controller
 poscontrol = {}
 
