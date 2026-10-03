@@ -124,7 +124,11 @@ SERIAL1_BAUD,115
 # SERIAL6 (USART3) = MSP DisplayPort (DJI 图传口, 本车不用)
 # SERIAL7 (UART5)  = RCIN     -> 遥控接收机 (若遥控接 VCU 则此口空闲)
 
-# ---------- 板载 OSD: 本车没有图传, 关闭 ----------
+# ---------- 板载 OSD: 本车没有图传, 两路都关闭 ----------
+# 本板默认 OSD_TYPE=1 (板载 AT7456E)、OSD_TYPE2=5 (DisplayPort). 必须两路一起关:
+#   只关 OSD_TYPE 而 OSD_TYPE2 仍为 5 时, 4.7.1 的 OSD 线程访问空指针, 飞控启动即卡死、USB 连不上
+#   (v4.7.1-garlic.3 起固件已修复, 参数仍两路都关).
+OSD_TYPE2,0
 OSD_TYPE,0
 
 # ---------- 定位 (维特智能 WTRTK-982 / UM982 双天线定向) ----------
