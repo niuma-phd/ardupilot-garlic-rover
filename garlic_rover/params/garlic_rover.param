@@ -149,11 +149,16 @@ GPS1_MB_TYPE,1
 
 # ---------- 脚本参数 (首次运行 vcu_can.lua 并重启后才出现) ----------
 # VCU_ENABLE,1
+# MotionSta 反馈超时(ms), 0=不检查反馈(台架调试用)
 # VCU_FB_TMO,200
 # VCU_V_MAX,1.5
-# VCU_W_MAX,1.0
+# VCU_W_MAX 已废弃 (Nav v1.0 协议发前轮转角, 不再发角速度), 序号保留勿复用
 # VCU_REV,0
-# 调试量 VCU_CMD_V/W、VCU_V/W 上报地面站的频率(Hz), 0=不发 (4G 省流量); 台架调试时设 5
+# 轴距(m), Ackermann 转角换算用, 按实车测量值填写
+# VCU_W_BASE,2.0
+# 作业电机启停使能: 1=AUTO 行驶中自动开 (Work_Speed/Dir 协议固定为 0)
+# VCU_WORK_EN,0
+# 调试量 VCU_CMD_V/W/D、VCU_V/W 上报地面站的频率(Hz), 0=不发 (4G 省流量); 台架调试时设 5
 # VCU_DBG_HZ,0
 # RTK 要求: 0=不检查, 1=浮点解或固定解, 2=仅固定解
 # VCU_RTK_REQ,2

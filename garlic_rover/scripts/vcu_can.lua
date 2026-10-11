@@ -28,9 +28,9 @@
  运动学: Ackermann, w = v*tan(delta)/L -> delta = atan(w*L/v), 左正
    delta 限幅 min(45deg, deg(atan(L/TURN_RADIUS))), |v|<0.05m/s 时保持上次转角
 
- 所需参数(示例, CAN3 接 VCU, 按实际接线调整):
-   SCR_ENABLE=1  CAN_P3_DRIVER=1  CAN_D3_PROTOCOL=10  CAN_P3_BITRATE=500000
-   (若 VCU 在其它 CAN 口, 用对应的 CAN_Px_DRIVER/CAN_Dx_PROTOCOL)
+ 所需参数(与 garlic_rover/params/garlic_rover.param 一致):
+   SCR_ENABLE=1  CAN_P2_DRIVER=2  CAN_D2_PROTOCOL=10  CAN_P2_BITRATE=500000
+   注: 甲方协议里的 "CAN3" 是整车总线名称; 飞控侧用 CAN2 口接入该总线(按实际接线调整)
 
  v/w 来源: AR_AttitudeControl:get_desired_speed()/get_desired_turn_rate()
    需要本仓库编译的固件 (Release 中的 *.apj; 官方固件没有这两个绑定), 官方固件下脚本不启动
