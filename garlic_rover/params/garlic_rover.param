@@ -85,7 +85,7 @@ FS_ACTION,2
 FS_TIMEOUT,1.5
 # 地面站断链保护: 2 = Auto 模式下断链继续跑完航线, 其他模式按 FS_ACTION 停车.
 # 与地面站断线告警"车辆仍在按航线自动作业"一致; 4G 信号时好时坏, 设 1 会频繁停车.
-# 作业中的安全由电子围栏、VCU/RTK 检查 (vcu_can.lua)、陷车检测和车上急停保证.
+# 作业中的安全由 VCU/RTK 检查 (vcu_can.lua)、陷车检测和车上硬件急停回路保证 (本车不用电子围栏).
 FS_GCS_ENABLE,2
 FS_GCS_TIMEOUT,5
 # 若没有 ArduPilot 端遥控接收机(遥控直接接 VCU), 关闭遥控失控检测
@@ -96,16 +96,6 @@ CRASH_THR_MIN,10
 CRASH_VEL_MIN,0.08
 CRASH_TIMEOUT,3
 FS_EKF_ACTION,1
-
-# ---------- 电子围栏 (地块边界) ----------
-# 地面站要求先上传多边形围栏才能开始作业, 飞控必须启用围栏才会执行.
-# 未上传围栏时解锁被拒绝 (PreArm: Polygon fence(s) invalid), 这是期望的行为.
-# 台架测试时可临时设 0, 见台架测试手册"测完必须恢复的参数".
-FENCE_ENABLE,1
-# 4 = 只用多边形. Rover 默认 6 还包括以起点为圆心、FENCE_RADIUS (默认 300 m) 的圆形围栏, 大地块会误停车
-FENCE_TYPE,4
-# 越界动作 2=HOLD
-FENCE_ACTION,2
 
 # ---------- 解锁检查 ----------
 # 飞控不接遥控接收机 (遥控直接接 VCU): 跳过 RC 检查. 64 = AP_Arming::Check::RC, 其他解锁检查不受影响
@@ -118,9 +108,10 @@ BRD_SAFETY_DEFLT,0
 # SERIAL1 (USART2) = MAVLink2 -> 接数传电台 / 4G 模块
 # 板子默认 57600, 必须与 4G DTU (EP-D200) 一致, 否则 4G 完全不通
 SERIAL1_BAUD,115
+# [重启] GPS 口 (SERIAL3/USART1, 板上标 GPS) 接 UM982; 与模块约定固定 230400, 模块侧配置见台架测试手册 C0
+SERIAL3_BAUD,230
 # 以下为 AP-H743v3 默认值, 不用改, 仅作接线说明
 # SERIAL2 (UART4)  = MAVLink2 -> 备用数传
-# SERIAL3 (USART1) = GPS      -> 接 RTK GPS (UM982) , 板上标 GPS 的口
 # SERIAL6 (USART3) = MSP DisplayPort (DJI 图传口, 本车不用)
 # SERIAL7 (UART5)  = RCIN     -> 遥控接收机 (若遥控接 VCU 则此口空闲)
 
@@ -137,7 +128,8 @@ EK3_SRC1_YAW,2
 COMPASS_USE,0
 COMPASS_USE2,0
 COMPASS_USE3,0
-# UM982 双天线 NMEA; 飞控自动下发 UNIHEADINGA/AGRICA 等配置 (GPS_AUTO_CONFIG 保持默认 1), 波特率自动识别
+# UM982 双天线 NMEA; 飞控自动下发 UNIHEADINGA/AGRICA 等配置 (GPS_AUTO_CONFIG 保持默认 1)
+# 串口固定 230400 (SERIAL3_BAUD=230); 模块侧首次用 UPrecise 固化配置, 命令清单见台架测试手册 C0
 GPS1_TYPE,25
 # 航向 = 按 GPS1_MB_OFS_* 换算的两天线连线方向 (1 = 使用下面的自定义偏移)
 GPS1_MB_TYPE,1
