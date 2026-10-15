@@ -102,14 +102,14 @@
 | 压线精度 | `PSC_POS_P`、`PSC_VEL_P/I/D`、`WP_RADIUS` | 偏离航线后纠回来的力度；到点判定半径 |
 | 定位 | `GPS1_MB_OFS_X/Y/Z`、`GPS1_POS_X/Y/Z`（`GPS1_TYPE=25`、`GPS1_MB_TYPE=1` 已设） | 双天线定向：主天线相对从天线、主天线相对飞控的位置，要量准 |
 | CAN | `CAN_P2_BITRATE` | 和 VCU 一致（默认 500000） |
-| 保护 | `FS_CRASH_CHECK`、`CRASH_*`、`FS_GCS_*`、`FENCE_*` | 陷车、地面站失联、越界时停车 |
+| 保护 | `FS_CRASH_CHECK`、`CRASH_*`、`FS_GCS_*` | 陷车、地面站失联时停车（本车不用电子围栏，`FENCE_ENABLE`=0） |
 
 **调参方法**：
 1. 先空载低速（0.3 m/s）走直线和矩形。
 2. 下载日志，对比 `THR.DesSpeed`、`STER.DesTurnRate`（期望值）和 `VCU.V`、`VCU.W`（底盘实际值）。实际值跟不上期望值时，先让底盘方调 VCU 的闭环。
 3. 然后在 RTK 固定解下，逐步调上表"压线精度"一行的参数，看 `NTUN.XTrack`（横向误差）。
 
-> 台架测试时如果临时改过 `VCU_RTK_REQ`、`VCU_FB_TMO`、`FS_CRASH_CHECK`、`LOG_DISARMED`、`FENCE_ENABLE`、`VCU_DBG_HZ`，**上车前务必改回** 2、200、1、0、1、0。
+> 台架测试时如果临时改过 `VCU_RTK_REQ`、`VCU_FB_TMO`、`FS_CRASH_CHECK`、`LOG_DISARMED`、`VCU_DBG_HZ`，**上车前务必改回** 2、200、1、0、0。
 
 ## 6. 自己编译
 

@@ -88,6 +88,8 @@ FS_TIMEOUT,1.5
 # 作业中的安全由 VCU/RTK 检查 (vcu_can.lua)、陷车检测和车上硬件急停回路保证 (本车不用电子围栏).
 FS_GCS_ENABLE,2
 FS_GCS_TIMEOUT,5
+# 电子围栏: 本车不用, 显式关闭 (garlic.5 及以前的参数设过 FENCE_ENABLE=1, 加载本文件会把它关掉)
+FENCE_ENABLE,0
 # 若没有 ArduPilot 端遥控接收机(遥控直接接 VCU), 关闭遥控失控检测
 FS_THR_ENABLE,0
 # 碰撞/卡死检测: 有油门需求但车速 < CRASH_VEL_MIN 持续 CRASH_TIMEOUT 秒 -> HOLD (陷车、VCU 不执行时停车)
