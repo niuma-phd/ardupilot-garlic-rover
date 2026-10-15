@@ -42,7 +42,7 @@ jobs:
           build=true; prev=""
           case "$GITHUB_EVENT_NAME" in
             pull_request)
-              changed="$(git diff --name-only "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}")"
+              changed="$(git -c core.quotePath=false diff --name-only "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}")"
               echo "$changed"
               if ! grep -qv '^garlic_rover/' <<<"$changed"; then
                 build=false
@@ -55,7 +55,7 @@ jobs:
               if [[ -z "$prev" ]]; then
                 echo "no previous v*-garlic.* tag: full build"
               else
-                changed="$(git diff --name-only "$prev" "$tag")"
+                changed="$(git -c core.quotePath=false diff --name-only "$prev" "$tag")"
                 echo "changes since $prev:"; echo "$changed"
                 other="$(grep -vE '^(garlic_rover/|\.github/)|\.md$' <<<"$changed" || true)"
                 if [[ -n "$other" ]]; then
