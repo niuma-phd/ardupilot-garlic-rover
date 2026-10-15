@@ -383,6 +383,7 @@ local function update()
   end
 
   -- 5Hz 上报地面站 (客户地面站只用这 5 个值, 4G 按流量计费)
+  -- VCU_MODE/VCU_FAULT/VCU_OK 始终发送; VCU_BATV/VCU_SOC 仅在收到 HealthSta 时发送
   if now - last_gcs_ms >= 200 then
     last_gcs_ms = now
     -- VCU_MODE: 0 未知(NavSta 无效), 1 遥控/切换中, 2 无人
@@ -399,8 +400,12 @@ local function update()
       if drv > 0 then fault_code = 0x100 + drv end
     end
     gcs:send_named_float("VCU_FAULT", fault_code)
-    gcs:send_named_float("VCU_BATV", health_fresh and health.bat_v or 0)
-    gcs:send_named_float("VCU_SOC", health_fresh and health.soc or 0)
+    -- VCU_BATV/VCU_SOC: 仅在 HealthSta 新鲜 (1500 ms 内) 时发送; 没收到就完全不发,
+    -- 避免地面站把 0 当成真实电量而显示 0% / 报低电量 (飞控单独供电, 自身电池监测不可信)
+    if health_fresh then
+      gcs:send_named_float("VCU_BATV", health.bat_v)
+      gcs:send_named_float("VCU_SOC", health.soc)
+    end
     gcs:send_named_float("VCU_OK", ok and 1 or 0)
   end
 

@@ -101,7 +101,7 @@ MotionSta / HealthSta 仅用于板载日志和地面站遥测，**授权判定�
 |---|---|
 | `VCU_MODE` | 0 NavSta 无效；1 遥控/切换中；2 无人 |
 | `VCU_FAULT` | Sys_Fault 1~7 直报；HsErr 报 0x10+码；驱动器故障报 0x100+码 |
-| `VCU_BATV` / `VCU_SOC` | HealthSta 电压 / 电量（1500 ms 内新鲜，否则 0） |
+| `VCU_BATV` / `VCU_SOC` | HealthSta 电压 / 电量（仅在 HealthSta 1500 ms 内新鲜时发送，否则不发） |
 | `VCU_OK` | 综合就绪位（授权 + 反馈正常 + RTK 保持） |
 
 板载日志 `VCU` 消息（50 Hz）：`CV,CD,AV,AD,Op,HS,Er,VS,FS,Ok,Fix` —— 指令 v/转角、实际 v/转角、OpSource、HandoverState、HsErr、Veh_State、Failsafe、就绪位、定位状态。

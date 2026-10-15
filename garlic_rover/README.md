@@ -64,7 +64,7 @@
   - VCU 急停；
   - VCU 报故障；
   - RTK 没有固定解（掉解超过 3 秒）。
-- **上报状态**：以 5 Hz 发 `NAMED_VALUE_FLOAT`（`VCU_OK`、`VCU_MODE`、`VCU_FAULT`、`VCU_BATV`、`VCU_SOC`）给地面站。调试量 `VCU_CMD_V/W`、`VCU_V/W` 默认不发（4G 按流量计费），调试时把 `VCU_DBG_HZ` 设为 5。
+- **上报状态**：以 5 Hz 发 `NAMED_VALUE_FLOAT`（`VCU_OK`、`VCU_MODE`、`VCU_FAULT`、`VCU_BATV`、`VCU_SOC`）给地面站；`VCU_BATV`、`VCU_SOC` 只在收到 HealthSta 时发送。调试量 `VCU_CMD_V/W`、`VCU_V/W` 默认不发（4G 按流量计费），调试时把 `VCU_DBG_HZ` 设为 5。
 - **板载日志**：记录 `VCU` 消息，50 Hz，包含指令 v/ω、底盘实际 v/ω、转角、模式、故障码、定位状态。
 - 协议细节见 [CAN通信协议.md](docs/CAN通信协议.md)。**VCU 协议有变化时只改这个脚本，不用改固件。**
 
