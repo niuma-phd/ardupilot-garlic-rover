@@ -1,13 +1,15 @@
 # 大蒜播种车 Rover 4.7.1 / X-MAV AP-H743v3 基础参数 (Mission Planner / MAVProxy 格式: 名称,值)
 # 导入方式: Mission Planner "全部参数表 -> 加载"; 或 MAVProxy "param load garlic_rover.param"
-# 数值为起始值, 实车需按 garlic_rover/README.md 的"调参"一节调整.
+# 数值为起始值. 实车需要调的: TURN_RADIUS、速度、控制器限幅、PSC_POS_P/PSC_VEL_*、WP_RADIUS、GPS1_MB_OFS_*/GPS1_POS_*.
+#   调参时对比日志 THR.DesSpeed / STER.DesTurnRate (期望) 与 VCU.V / VCU.W (底盘实际), 压线看 NTUN.XTrack.
+# 标 [固定] 的参数不要改, 原因写在各自的注释里.
 # 带 [重启] 的参数修改后需重启飞控.
 # 必须加载两遍: SCR_ENABLE、CAN_P2_DRIVER 是"总开关", 为 0 时同组的 SCR_HEAP_SIZE、CAN_P2_BITRATE 被隐藏,
 #   第一遍会提示 missing. 第一遍写入并重启后再加载写入一遍即可.
 
 # ---------- 车型 ----------
 FRAME_CLASS,1
-# 阿克曼: 禁止原地转向
+# [固定] 阿克曼底盘不能原地转向, 必须为 0
 WP_PIVOT_ANGLE,0
 # 上电默认 HOLD(4), 不用默认的 MANUAL
 INITIAL_MODE,4
@@ -20,7 +22,8 @@ SCR_ENABLE,1
 SCR_HEAP_SIZE,204800
 CAN_P1_DRIVER,1
 CAN_D1_PROTOCOL,1
-# [重启] CAN2 -> 驱动2 -> 脚本协议(10)
+# [固定][重启] CAN2 -> 驱动2 -> 脚本协议(10): CAN2 交给 Lua 脚本 (vcu_can.lua) 收发 VCU 帧;
+#   改成其它协议后脚本拿不到 CAN 口 (报 "VCU: no scripting CAN"), 不再给 VCU 发指令
 CAN_P2_DRIVER,2
 CAN_D2_PROTOCOL,10
 # [重启] 与 VCU 一致: 250000 / 500000
@@ -60,7 +63,7 @@ SERVO3_FUNCTION,70
 MOT_SPD_SCA_BASE,0
 MOT_SLEWRATE,0
 
-# ---------- 内部转向/速度 PID: 设为纯前馈, 防止占位输出饱和 ----------
+# ---------- [固定] 内部转向/速度 PID: 设为纯前馈, 防止占位输出饱和 ----------
 # 原因: 转向/油门输出不接执行机构, 若保留 P/I, 积分会一直累积到饱和;
 #   转向饱和会置 "转向到极限" 标志, 位置控制器 (AR_PosControl) 据此停止该方向的纠偏, 压线变差;
 #   油门输出还被碰撞检测 (FS_CRASH_CHECK) 使用, 纯前馈时它与期望速度成正比, 判断才可靠.
@@ -125,7 +128,7 @@ OSD_TYPE2,0
 OSD_TYPE,0
 
 # ---------- 定位 (维特智能 WTRTK-982 / UM982 双天线定向) ----------
-# 航向只用 GPS 双天线 (2), 不用磁罗盘 (农机上铁件和电机干扰大, 也免去罗盘校准)
+# [固定] 航向只用 GPS 双天线 (2), 不用磁罗盘 (农机上铁件和电机干扰大, 也免去罗盘校准)
 EK3_SRC1_YAW,2
 COMPASS_USE,0
 COMPASS_USE2,0
@@ -142,6 +145,8 @@ GPS1_MB_TYPE,1
 # 装好后原地转动车身, 确认 HUD 航向与车头方向一致 (差 180 度说明 GPS1_MB_OFS_X 正负号反了)
 
 # ---------- 脚本参数 (首次运行 vcu_can.lua 并重启后才出现) ----------
+# 台架测试时如果临时改过 VCU_RTK_REQ、VCU_FB_TMO、FS_CRASH_CHECK、LOG_DISARMED、VCU_DBG_HZ,
+#   上车前务必改回 2、200、1、0、0.
 # VCU_ENABLE,1
 # MotionSta 反馈超时(ms), 0=不检查反馈(台架调试用)
 # VCU_FB_TMO,200

@@ -1,12 +1,15 @@
 # Build the garlic seeder Rover firmware and publish a GitHub Release on version tags.
 #
-#   push to garlic-rover-4.7 / pull request / manual run -> build, upload workflow artifacts
-#   push tag v*-garlic.* (e.g. v4.7.1-garlic.1)          -> build + create Release with all files
+#   pull request touching only garlic_rover/**   -> Lua syntax check only
+#   other pull request / manual run              -> full build, upload workflow artifacts
+#   push tag v*-garlic.* (e.g. v4.7.1-garlic.9)  -> Release with 4 files; the firmware is rebuilt only when
+#                                                   something outside garlic_rover/**, .github/**, *.md changed
+#                                                   since the previous v*-garlic.* tag, otherwise the previous
+#                                                   Release's .apj / _bl.bin are reused (identical binaries)
 name: garlic-rover firmware
 
 on:
   push:
-    branches: [garlic-rover-4.7]
     tags: ['v*-garlic.*']
   pull_request:
     branches: [garlic-rover-4.7]
@@ -17,7 +20,79 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  plan:
+    runs-on: ubuntu-22.04
+    outputs:
+      build: ${{ steps.plan.outputs.build }}
+      prev: ${{ steps.plan.outputs.prev }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0        # previous tag + diff between tags
+          filter: blob:none     # commits and trees only, the diff needs no file contents
+          sparse-checkout: .github
+
+      - name: Decide whether to build
+        id: plan
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          build=true; prev=""
+          case "$GITHUB_EVENT_NAME" in
+            pull_request)
+              changed="$(git diff --name-only "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}")"
+              echo "$changed"
+              if ! grep -qv '^garlic_rover/' <<<"$changed"; then
+                build=false
+                echo "only garlic_rover/** changed: Lua check only, no firmware build"
+              fi
+              ;;
+            push)
+              tag="$GITHUB_REF_NAME"
+              prev="$(git describe --tags --abbrev=0 "${tag}^" --match 'v*-garlic.*' 2>/dev/null || true)"
+              if [[ -z "$prev" ]]; then
+                echo "no previous v*-garlic.* tag: full build"
+              else
+                changed="$(git diff --name-only "$prev" "$tag")"
+                echo "changes since $prev:"; echo "$changed"
+                other="$(grep -vE '^(garlic_rover/|\.github/)|\.md$' <<<"$changed" || true)"
+                if [[ -n "$other" ]]; then
+                  echo "files outside garlic_rover/**, .github/**, *.md changed: full build"
+                else
+                  assets="$(gh release view "$prev" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' 2>/dev/null || true)"
+                  if grep -q '\.apj$' <<<"$assets" && grep -q '_bl\.bin$' <<<"$assets"; then
+                    build=false
+                    echo "no C++ changes: reuse the firmware of $prev"
+                  else
+                    echo "Release $prev has no .apj / _bl.bin: full build"
+                  fi
+                fi
+              fi
+              ;;
+          esac
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+          echo "prev=$prev"   >> "$GITHUB_OUTPUT"
+
+  lua-check:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: garlic_rover
+
+      - name: Lua syntax check
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq lua5.4
+          luac5.4 -p garlic_rover/scripts/vcu_can.lua
+          echo "vcu_can.lua: syntax OK"
+
   build:
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
     runs-on: ubuntu-22.04
     # same toolchain image as upstream ArduPilot 4.7 CI (test_chibios.yml)
     container: ardupilot/ardupilot-dev-chibios:v0.1.3
@@ -62,24 +137,11 @@ jobs:
           set -euo pipefail
           board="${{ matrix.board }}"
           ver="${{ steps.ver.outputs.name }}"
-          bin="build/$board/bin"
-          bl="Tools/bootloaders/${board}_bl.bin"
-          stem="garlic-rover-${ver}-${board}"
-          out="dist/$stem"
-          mkdir -p "$out"
-          python3 -m pip install --user --progress-bar off intelhex
-          python3 Tools/scripts/make_intel_hex.py "$bin/ardurover.bin" "$bl" 128
-          cp "$bin/ardurover.apj"          "$out/$stem.apj"
-          cp "$bin/ardurover_with_bl.hex"  "$out/${stem}_with_bl.hex"
-          cp "$bl"                         "$out/"
-          cp garlic_rover/scripts/vcu_can.lua        "$out/"
-          cp garlic_rover/params/garlic_rover.param  "$out/"
-          cp garlic_rover/README.md "$out/"
-          # GitHub strips non-ASCII characters from release asset names: use ASCII file names
-          cp "garlic_rover/docs/CAN通信协议.md"   "$out/CAN-protocol.md"
-          cp "garlic_rover/docs/台架测试手册.md" "$out/bench-test-manual.md"
-          (cd dist && python3 -c "import shutil,sys; shutil.make_archive(sys.argv[1], 'zip', '.', sys.argv[1])" "$stem")
-          ls -la "$out" dist
+          mkdir -p dist
+          cp "build/$board/bin/ardurover.apj"   "dist/garlic-rover-${ver}-${board}.apj"
+          cp "Tools/bootloaders/${board}_bl.bin" dist/
+          cp garlic_rover/scripts/vcu_can.lua garlic_rover/params/garlic_rover.param dist/
+          ls -la dist
 
       - uses: actions/upload-artifact@v7
         with:
@@ -88,43 +150,82 @@ jobs:
           if-no-files-found: error
 
   release:
-    if: startsWith(github.ref, 'refs/tags/')
-    needs: build
+    needs: [plan, lua-check, build]
+    # build is skipped when the previous Release's firmware is reused
+    if: >-
+      always() && startsWith(github.ref, 'refs/tags/') &&
+      needs.plan.result == 'success' && needs.lua-check.result == 'success' &&
+      (needs.build.result == 'success' || needs.build.result == 'skipped')
     runs-on: ubuntu-22.04
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v7
         with:
+          fetch-depth: 0        # git log <previous tag>..<tag> for the release notes
+          filter: blob:none
           sparse-checkout: garlic_rover
 
       - uses: actions/download-artifact@v8
+        if: needs.build.result == 'success'
         with:
           path: artifacts
+
+      - name: Collect release files
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREV: ${{ needs.plan.outputs.prev }}
+          BUILT: ${{ needs.build.result == 'success' }}
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          mkdir -p dist
+          if [[ "$BUILT" == true ]]; then
+            find artifacts -type f \( -name '*.apj' -o -name '*_bl.bin' \) -exec cp {} dist/ \;
+          else
+            gh release download "$PREV" --repo "$GITHUB_REPOSITORY" -p '*.apj' -p '*_bl.bin' -D dist
+            for f in dist/*.apj; do mv "$f" "${f//$PREV/$tag}"; done
+          fi
+          # Lua and parameters always come from this commit; stamp the script version (STATUSTEXT max 50 bytes)
+          short="${tag#v*-}"    # v4.7.1-garlic.9 -> garlic.9
+          msg="VCU: CAN bridge loaded (Nav v1.0) ${short}"
+          if (( ${#msg} > 50 )); then echo "startup message too long (${#msg} > 50): $msg"; exit 1; fi
+          sed 's/^local SCRIPT_VERSION = "dev"$/local SCRIPT_VERSION = "'"$short"'"/' \
+              garlic_rover/scripts/vcu_can.lua > dist/vcu_can.lua
+          grep -q "^local SCRIPT_VERSION = \"$short\"$" dist/vcu_can.lua
+          cp garlic_rover/params/garlic_rover.param dist/
+          ls -la dist
+          [[ $(ls dist | wc -l) -eq 4 ]]
 
       - name: Create release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          PREV: ${{ needs.plan.outputs.prev }}
+          BUILT: ${{ needs.build.result == 'success' }}
         run: |
           set -euo pipefail
-          tag="${GITHUB_REF_NAME}"
-          sed -e "s/@TAG@/${tag}/g" -e "s/@SHA@/${GITHUB_SHA::10}/g" \
-              garlic_rover/release_notes.md > notes.md
-          mapfile -t files < <(find artifacts -type f | sort -u)
-          # the .md / .lua / .param files are identical for every board: upload each name once
-          declare -A seen; upload=()
-          for f in "${files[@]}"; do
-            n="$(basename "$f")"
-            [[ -n "${seen[$n]:-}" ]] && continue
-            seen[$n]=1
-            case "$n" in   # "file#label": the label is what the release page shows
-              CAN-protocol.md)      upload+=("$f#CAN-protocol.md（CAN通信协议）") ;;
-              bench-test-manual.md) upload+=("$f#bench-test-manual.md（台架测试手册）") ;;
-              *)                    upload+=("$f") ;;
-            esac
-          done
-          gh release create "$tag" "${upload[@]}" \
+          tag="$GITHUB_REF_NAME"
+          {
+            if [[ "$BUILT" == true ]]; then
+              echo "**固件**：本版重新编译。"
+            else
+              echo "**固件**：沿用 ${PREV} 的固件（未改 C++ 代码，二进制相同）。"
+            fi
+            echo
+            echo "**本版改动**："
+            echo
+            if [[ -n "$PREV" ]]; then
+              git log --no-merges --pretty='- %s (%h)' "${PREV}..${tag}"
+            else
+              echo "- （没有上一个 v*-garlic.* 版本，不列出）"
+            fi
+            echo
+            sed "s/@TAG@/${tag}/g" garlic_rover/release_notes.md
+          } > notes.md
+          cat notes.md
+          gh release create "$tag" dist/* \
             --repo "$GITHUB_REPOSITORY" \
             --title "大蒜播种车 Rover 固件 ${tag}" \
             --notes-file notes.md

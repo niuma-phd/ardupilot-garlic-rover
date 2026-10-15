@@ -42,6 +42,9 @@ local LOOP_MS = 10            -- 主循环 10ms, 保证 50ms 发帧抖动 <=10ms
 local TX_PERIOD_MS = 50       -- Nav_Cmd 发送周期 (协议定值)
 local NAVSTA_TMO_MS = 500     -- NavSta 监控超时 (协议定值)
 
+-- 脚本版本: 仓库里为 "dev", CI 打包 Release 时替换为 tag 名 (如 garlic.9)
+local SCRIPT_VERSION = "dev"
+
 -- MAV_SEVERITY
 local MAV_EMERG, MAV_CRIT, MAV_WARN, MAV_INFO = 0, 2, 4, 6
 
@@ -423,7 +426,7 @@ local function update()
   return update, LOOP_MS
 end
 
-gcs:send_text(MAV_INFO, "VCU: CAN bridge loaded (Nav v1.0)")
+gcs:send_text(MAV_INFO, "VCU: CAN bridge loaded (Nav v1.0) " .. SCRIPT_VERSION)
 
 -- 出错时静默 (VCU 看门狗 100ms 后受控停车收权, 安全方向), 1s 后重启脚本
 local function protected_wrapper()

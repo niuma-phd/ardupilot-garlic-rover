@@ -1,18 +1,11 @@
-大蒜播种车导航控制器固件 **@TAG@**（commit `@SHA@`）。基于 ArduPilot 官方 **Rover-4.7.1** 稳定版，飞控 **X-MAV AP-H743v3**。
-
 ## 文件说明
 
 | 文件 | 用途 |
 |---|---|
 | `garlic-rover-@TAG@-X-MAV-AP-H743v3.apj` | **固件**：Mission Planner → 初始设置 → 安装固件 → **加载自定义固件**（不要点车型图片） |
-| `garlic-rover-@TAG@-X-MAV-AP-H743v3_with_bl.hex` | 固件加 Bootloader 的完整镜像，用 STM32CubeProgrammer 整片烧写时用 |
 | `X-MAV-AP-H743v3_bl.bin` | Bootloader：板子第一次装 ArduPilot 时，按住 BOOT 键插 USB，用 STM32CubeProgrammer 刷到 `0x08000000` |
-| `vcu_can.lua` | 车端脚本：放到 SD 卡的 `APM/scripts/` |
+| `vcu_can.lua` | 车端脚本：放到 SD 卡的 `APM/scripts/`；启动消息末尾是脚本版本（如 `garlic.9`） |
 | `garlic_rover.param` | 基础参数：Mission Planner → 全部参数表 → 加载 → 写入 → 重启，**加载、写入两遍** |
-| `README.md` | **配置与调参说明**（先看这个） |
-| `CAN-protocol.md` | CAN通信协议：与底盘 VCU 的 CAN 协议（CAN2，500 kbit/s） |
-| `bench-test-manual.md` | 台架测试手册：刷机、配置、CAN 和 RTK 的逐步测试方法，写到 Mission Planner 按钮级别 |
-| `garlic-rover-@TAG@-X-MAV-AP-H743v3.zip` | 以上全部文件打包 |
 
 ## 快速上手
 
@@ -29,5 +22,3 @@
 - 从 ArduPilot master 移植 X-MAV AP-H743v3 的板级定义、板号（1220）和 Bootloader。
 - 修复 OSD 空指针：`OSD_TYPE`=0 而 `OSD_TYPE2` 不为 0 时，官方 4.7.1 的 OSD 线程访问空指针，飞控启动即卡死（本板默认 `OSD_TYPE2`=5）。garlic.4 起改用官方修复 [ArduPilot#34497](https://github.com/ArduPilot/ardupilot/pull/34497)（截至本版本尚未合并进官方），同时修正只开第二路 OSD 时的解锁前误报。
 - 车端 CAN 桥接脚本、基础参数和文档放在 `garlic_rover/` 目录。
-
-> 台架测试时如果临时改过 `VCU_RTK_REQ`、`VCU_FB_TMO`、`FS_CRASH_CHECK`、`LOG_DISARMED`、`VCU_DBG_HZ`，上车前务必改回 2、200、1、0、0。
