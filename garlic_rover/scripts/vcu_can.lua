@@ -1,6 +1,6 @@
 --[[
  vcu_can.lua  大蒜播种车 Nav(飞控) <-> 底盘VCU  CAN 桥接脚本
- 固件: ArduPilot Rover 4.7.1 + 补丁 (飞控 X-MAV AP-H743v3)
+ 固件: ArduPilot Rover 4.7.2 + 补丁 (飞控 X-MAV AP-H743v3)
 
  协议: 《Nav <-> VCU CAN 通讯协议 v1.0》(2026-10-10, 甲方定版)
    总线 CAN3, 500 kbit/s, 29 位扩展帧 (IDE=1), 经典 CAN, DLC=8, Intel 小端
