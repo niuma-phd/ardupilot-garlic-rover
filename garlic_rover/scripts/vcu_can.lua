@@ -9,9 +9,11 @@
    Nav_HsAck   0x180D7D41  Nav -> VCU  邀请 (HandoverState=1) 后 2s 内应答, 每事务只答一次
    VCU_NavSta  0x180B417D  VCU -> 总线 100ms 广播, 授权唯一真相, Nav 监控超时定值 500ms
    FCU_SwapCmd 0x180A7D40  参考帧, Nav 不消费
-   监听帧 (仅日志/遥测, 不参与授权判定):
+   监听帧 (不参与 VCU 授权判定, 授权只看 NavSta; 但用于解锁检查和行驶中保护):
    VCU_MotionSta 0x1802407D  50ms
    VCU_HealthSta 0x1806407D  500ms
+     反馈超时 / Failsafe / HealthSta 故障码非 0 时禁止解锁, 行驶中切 HOLD 并持续发 v=0;
+     VCU_FB_TMO=0 时不检查
 
  核心规则 (协议 04 章):
    1. 上电静默: 只听 NavSta, 不主动发任何帧
@@ -160,7 +162,8 @@ end
 ---------------------------------------------------------------------------
 -- NavSta: 授权唯一真相
 local navsta = { ms = 0, op = 0, hs = 0, seq = 0, err = 0 }
--- MotionSta / HealthSta: 仅日志与遥测, 不参与授权判定
+-- MotionSta / HealthSta: 不参与 VCU 授权判定 (授权只看 NavSta), 但用于解锁检查和行驶中保护:
+--   反馈超时 / Failsafe / HealthSta 故障码非 0 时禁止解锁, 行驶中切 HOLD 并持续发 v=0; VCU_FB_TMO=0 时不检查
 local motion = { ms = 0, v = 0, steer_deg = 0, veh = -1, failsafe = false }
 local health = { ms = 0, soc = 0, bat_v = 0, drv1 = 0, drv2 = 0, drv3 = 0, sys = 0 }
 
