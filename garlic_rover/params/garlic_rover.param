@@ -1,11 +1,13 @@
 # 大蒜播种车 Rover 4.7.2 / X-MAV AP-H743v3 基础参数 (Mission Planner / MAVProxy 格式: 名称,值)
 # 导入方式: Mission Planner "全部参数表 -> 加载"; 或 MAVProxy "param load garlic_rover.param"
-# 数值为起始值. 实车需要调的: TURN_RADIUS、速度、控制器限幅、PSC_POS_P/PSC_VEL_*、WP_RADIUS、GPS1_MB_OFS_*/GPS1_POS_*.
+# 几何和速度已按实车填写 (10-18 甲方回复 + 整车模型). 现场仍可能要调的: TURN_RADIUS (实测后)、PSC_POS_P/PSC_VEL_*、
+#   WP_RADIUS、ATC_ACCEL_MAX/ATC_DECEL_MAX、ATC_STR_ACC_MAX.
 #   调参时对比日志 THR.DesSpeed / STER.DesTurnRate (期望) 与 VCU.V / VCU.W (底盘实际), 压线看 NTUN.XTrack.
 # 标 [固定] 的参数不要改, 原因写在各自的注释里.
 # 带 [重启] 的参数修改后需重启飞控.
 # 必须加载两遍: SCR_ENABLE、CAN_P2_DRIVER 是"总开关", 为 0 时同组的 SCR_HEAP_SIZE、CAN_P2_BITRATE 被隐藏,
 #   第一遍会提示 missing. 第一遍写入并重启后再加载写入一遍即可.
+#   VCU_* 参数在 vcu_can.lua 第一次运行并重启后才出现, 第一遍也会提示 missing, 属正常.
 
 # ---------- 车型 ----------
 FRAME_CLASS,1
@@ -13,8 +15,9 @@ FRAME_CLASS,1
 WP_PIVOT_ANGLE,0
 # 上电默认 HOLD(4), 不用默认的 MANUAL
 INITIAL_MODE,4
-# 最小转弯半径(m), 按底盘实测填写
-TURN_RADIUS,3.0
+# 最小转弯半径(m): 等效轴距 1.2 m、前辊最大摆角 30 度的理论值 1.2/tan30 = 2.08 m;
+#   vcu_can.lua 按 atan(VCU_W_BASE/TURN_RADIUS) 限前辊转角, 2.1 对应约 29.7 度. 实测最小转弯半径后替换
+TURN_RADIUS,2.1
 
 # ---------- 脚本 + CAN (CAN1 保留给 DroneCAN, CAN2 接 VCU) ----------
 # [重启]
@@ -30,15 +33,16 @@ CAN_D2_PROTOCOL,10
 CAN_P2_BITRATE,500000
 
 # ---------- 航点导航 ----------
-# 作业速度(m/s)
-WP_SPEED,0.8
-CRUISE_SPEED,0.8
+# 作业速度(m/s): 播种/行驶速度 2 km/h = 0.556 m/s
+WP_SPEED,0.55
+CRUISE_SPEED,0.55
 # 到点判定半径(m), 有 RTK 时可取 0.3~0.5
 WP_RADIUS,0.5
 WP_ACCEL,0.5
 WP_JERK,1.0
 # 速度上限(m/s), 显式设置; 0 表示由 CRUISE_* 推算, 与 VCU 不相符. 与 VCU_V_MAX 保持一致
-SPEED_MAX,1.5
+#   甲方给的最高安全车速 5 km/h = 1.389 m/s, 取略小
+SPEED_MAX,1.38
 # 返航速度, 0=用 WP_SPEED
 RTL_SPEED,0
 # 任务结束后: 0=HOLD
@@ -73,14 +77,15 @@ ATC_STR_RAT_I,0
 ATC_STR_RAT_D,0
 ATC_STR_RAT_IMAX,0
 ATC_STR_RAT_FF,0.2
-# 油门输出 = v x CRUISE_THROTTLE/100 / CRUISE_SPEED; v 最大 1.5 -> 94%, 不饱和
+# 油门输出 = v x CRUISE_THROTTLE/100 / CRUISE_SPEED; v 最大 1.38 -> 1.38 x 0.35 / 0.55 = 88%, 不饱和
+#   (CRUISE_THROTTLE 保持 50 时 v > 1.1 m/s 就超过 100%)
 # ATC_SPEED_P 允许范围 0.01~2, 取最小值 0.01 (影响可忽略); 关键是 I=0 不累积
 ATC_SPEED_P,0.01
 ATC_SPEED_I,0
 ATC_SPEED_D,0
 ATC_SPEED_IMAX,0
 ATC_SPEED_FF,0
-CRUISE_THROTTLE,50
+CRUISE_THROTTLE,35
 
 # ---------- 失控保护 ----------
 # 1=RTL 2=HOLD, 农田作业建议 HOLD
@@ -138,28 +143,41 @@ COMPASS_USE3,0
 GPS1_TYPE,25
 # 航向 = 按 GPS1_MB_OFS_* 换算的两天线连线方向 (1 = 使用下面的自定义偏移)
 GPS1_MB_TYPE,1
-# 以下按实测填写 (单位 m, 前/右/下为正), 默认 0 时没有 GPS 航向、解不了锁:
-# GPS1_MB_OFS_X/Y/Z = 主天线 (ANT1) 相对从天线 (ANT2) 的位置.
-#   例: 两天线沿车身前后安装, 主天线在后、从天线在前, 相距 1.0 m -> GPS1_MB_OFS_X,-1.0
-# GPS1_POS_X/Y/Z = 主天线相对飞控的位置
-# 装好后原地转动车身, 确认 HUD 航向与车头方向一致 (差 180 度说明 GPS1_MB_OFS_X 正负号反了)
+# 天线接线: UM982 主天线口 ANT1 接车身右侧天线, 从天线口 ANT2 接左侧天线; 两天线左右布置、等高, 间距 1.389 m.
+# 以下按整车模型测得 (10-18, 单位 m, 前/右/下为正), 装车后用卷尺复核天线间距.
+# GPS1_POS_X/Y/Z = 主天线 (ANT1, 右侧) 相对飞控的位置
+GPS1_POS_X,0.076
+GPS1_POS_Y,0.590
+GPS1_POS_Z,-0.019
+# GPS1_MB_OFS_X/Y/Z = 主天线 (ANT1) 相对从天线 (ANT2) 的位置 (ArduPilot 定义: 从天线 -> 主天线).
+#   主天线在从天线右侧 1.389 m -> GPS1_MB_OFS_Y,1.389
+GPS1_MB_OFS_X,0
+GPS1_MB_OFS_Y,1.389
+GPS1_MB_OFS_Z,0
+# 装好后原地转动车身, 确认 HUD 航向与车头方向一致. 本车两天线左右布置 (不是前后):
+#   差 180 度说明正负号反了 (ANT1/ANT2 接反), 把 GPS1_MB_OFS_Y 变号 (改为 -1.389) 或对调天线线缆
 
 # ---------- 脚本参数 (首次运行 vcu_can.lua 并重启后才出现) ----------
 # 台架测试时如果临时改过 VCU_RTK_REQ、VCU_FB_TMO、FS_CRASH_CHECK、LOG_DISARMED、VCU_DBG_HZ,
 #   上车前务必改回 2、200、1、0、0.
-# VCU_ENABLE,1
+#   本节写的就是上车值, 加载本文件即可把这些值一并恢复.
+VCU_ENABLE,1
 # MotionSta 反馈超时(ms), 0=不检查反馈(台架调试用)
-# VCU_FB_TMO,200
-# VCU_V_MAX,1.5
+VCU_FB_TMO,200
+# 线速度限幅(m/s), 与 SPEED_MAX 保持一致
+VCU_V_MAX,1.38
 # VCU_W_MAX 已废弃 (Nav v1.0 协议发前轮转角, 不再发角速度), 序号保留勿复用
-# VCU_REV,0
-# 轴距(m), Ackermann 转角换算用, 按实车测量值填写
-# VCU_W_BASE,2.0
-# 作业电机启停使能: 1=AUTO 行驶中自动开 (Work_Speed/Dir 协议固定为 0)
-# VCU_WORK_EN,0
+# 允许倒车: 本期不倒车
+VCU_REV,0
+# 等效轴距: 前辊转向轴到后辊轴线 1.2 m (整车模型, 装车后卷尺复核), Ackermann 转角换算用
+VCU_W_BASE,1.2
+# 作业电机启停使能: 1=AUTO 行驶中自动开 (Work_Speed/Dir 协议固定为 0). 本期导航不控制播种, 保持 0
+VCU_WORK_EN,0
 # 调试量 VCU_CMD_V/W/D、VCU_V/W 上报地面站的频率(Hz), 0=不发 (4G 省流量); 台架调试时设 5
-# VCU_DBG_HZ,0
+VCU_DBG_HZ,0
 # RTK 要求: 0=不检查, 1=浮点解或固定解, 2=仅固定解
-# VCU_RTK_REQ,2
+VCU_RTK_REQ,2
 # RTK 不满足要求持续多久(ms)后停车
-# VCU_RTK_TMO,3000
+VCU_RTK_TMO,3000
+# 解锁前也记日志: 0=关 (默认), 台架调试时可能临时设过 1
+LOG_DISARMED,0

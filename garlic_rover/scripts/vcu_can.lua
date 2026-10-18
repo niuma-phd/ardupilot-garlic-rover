@@ -86,7 +86,7 @@ local VCU_DBG_HZ  = bind_add_param("DBG_HZ", 2, 0)
 --[[ @Param: VCU_FB_TMO  @DisplayName: MotionSta反馈超时(ms), 0=不检查反馈(台架调试用) --]]
 local VCU_FB_TMO  = bind_add_param("FB_TMO", 3, 200)
 --[[ @Param: VCU_V_MAX  @DisplayName: 线速度限幅(m/s), 协议上限5.0 --]]
-local VCU_V_MAX   = bind_add_param("V_MAX", 4, 1.5)
+local VCU_V_MAX   = bind_add_param("V_MAX", 4, 1.38)
 -- 参数序号 5 (原 VCU_W_MAX) 已废弃: 新协议发转角不发角速度, 保留空位, 其它参数序号不变
 local VCU_W_MAX   = bind_add_param("W_MAX", 5, 1.0)
 --[[ @Param: VCU_REV  @DisplayName: 允许倒车  @Values: 0:否,1:是 --]]
@@ -95,8 +95,8 @@ local VCU_REV     = bind_add_param("REV", 6, 0)
 local VCU_RTK_REQ = bind_add_param("RTK_REQ", 7, 2)
 --[[ @Param: VCU_RTK_TMO  @DisplayName: RTK不满足要求持续多久(ms)后停车 --]]
 local VCU_RTK_TMO = bind_add_param("RTK_TMO", 8, 3000)
---[[ @Param: VCU_W_BASE  @DisplayName: 轴距(m), Ackermann 运动学换算用 --]]
-local VCU_W_BASE  = bind_add_param("W_BASE", 9, 2.0)
+--[[ @Param: VCU_W_BASE  @DisplayName: 等效轴距(m): 前辊转向轴到后辊轴线, Ackermann 运动学换算用 --]]
+local VCU_W_BASE  = bind_add_param("W_BASE", 9, 1.2)
 --[[ @Param: VCU_WORK_EN  @DisplayName: 允许作业电机启停(AUTO模式行驶中自动开)  @Values: 0:否,1:是 --]]
 local VCU_WORK_EN = bind_add_param("WORK_EN", 10, 0)
 
