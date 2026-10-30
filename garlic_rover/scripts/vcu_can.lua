@@ -65,7 +65,7 @@ local ID_HEALTH   = 0x1806407D
 
 -- NavSta 枚举
 local OP_NAV = 2              -- OpSource: 0 遥控, 1 切换中, 2 无人
-local HS_INVITING, HS_WAIT_START = 1, 2
+local HS_INVITING, HS_WAIT_START, HS_DONE = 1, 2, 3
 local HS_TIMEOUT, HS_REJECTED, HS_NAV_LOST, HS_RC_LOST = 4, 5, 6, 7
 -- WorkFb (v1.1): 0 运输就绪, 1 升/降杆中(行驶锁 0), 2 作业位就绪, 3 作业中, 4 提升超时故障(行驶锁 0)
 local WFB_LIFTING, WFB_LIFT_FAULT = 1, 4
@@ -322,6 +322,8 @@ local function update()
   if navsta_valid and navsta.hs ~= prev_hs then
     if navsta.hs == HS_WAIT_START then
       gcs:send_text(MAV_INFO, "VCU: wait RC start")
+    elseif navsta.hs == HS_DONE then
+      gcs:send_text(MAV_INFO, "VCU: RC start OK")    -- 遥控器已按 Ready, VCU 进入 RUN
     elseif navsta.hs == HS_TIMEOUT or navsta.hs == HS_REJECTED then
       gcs:send_text(MAV_WARN, "VCU: handover failed")
     elseif navsta.hs == HS_RC_LOST then
