@@ -1,8 +1,10 @@
-# Nav（飞控）↔ 底盘 VCU CAN 通信协议 V1.0
+# Nav（飞控）↔ 底盘 VCU CAN 通信协议 V1.1
 
 适用：大蒜播种车。导航侧为 X-MAV AP-H743v3 飞控（ArduPilot Rover 4.7.2 + Lua 脚本 `vcu_can.lua`），底盘为 VCU。
 
-本文档是甲方《Nav ↔ VCU CAN 通讯协议 v1.0》（2026-10-10 定版，合同附件）的**实现侧摘要**：帧定义、时限、握手规则以甲方原文为准，本文只记录导航侧的实现要点和双方确认的补充约定。甲方原件见项目资料 `01软件资料/03_通信/方案二_Nav直连VCU_甲方v1.0/`。
+本文档是甲方《Nav ↔ VCU CAN 通讯协议 v1.1》（2026-10-30；v1.0 为 2026-10-10 定版的合同附件）的**实现侧摘要**：帧定义、时限、握手规则以甲方原文为准，本文只记录导航侧的实现要点和双方确认的补充约定。甲方原件见项目资料 `01软件资料/03_通信/Nav_VCU_CAN通讯协议_v1.1.html`，变更说明见同目录 `Nav供应商_协议v1.1变更说明与联调事项.html`。
+
+> v1.1 相对 v1.0：NavSta byte4 由保留改为 **WorkFb**（作业状态反馈，见 §3.3）；Target_Steer 左正书面化；Work_On 作业序列语义明确（升杆→作业，降杆→运输）；握手第 ⑤ 步 VCU 侧已对齐。线格式与 v1.0 字节级兼容（WorkFb 激活前 byte4 恒为 0）。
 
 > 历史版本：V0.1 草案（标准帧 0x101/0x201/0x202、XOR 校验）已作废，由甲方 v1.0 取代。
 
@@ -22,8 +24,8 @@
 
 - 线速度 v：前进为正，m/s。
 - 角速度 ω：俯视逆时针（左转）为正，rad/s。
-- 前轮转角 δ：**左转为正**（2026-10-11 与甲方书面确认），deg。
-- Ackermann 换算在 **Nav 侧**完成：δ = atan(ω·L / v)，L 为轴距（参数 `VCU_W_BASE`，默认 2.0 m）；|v| < 0.05 m/s 时保持上次转角，不回正；δ 限幅 min(45°, atan(L/`TURN_RADIUS`) 换算值)。
+- 前轮转角 δ：**左转为正**（2026-10-11 双方确认，v1.1 协议 3.1 书面约定），deg。
+- Ackermann 换算在 **Nav 侧**完成：δ = atan(ω·L / v)，L 为等效轴距（参数 `VCU_W_BASE`，默认 1.2 m）；|v| < 0.05 m/s 时保持上次转角，不回正；δ 限幅 min(45°, atan(L/`TURN_RADIUS`) 换算值)。
 
 ## 3. 报文列表
 
@@ -33,16 +35,16 @@
 | 0x180D7D41 | Nav_HsAck | Nav → VCU | 事件应答 | 邀请后 2 s 内，每事务只答一次 |
 | 0x180B417D | VCU_NavSta | VCU → 总线 | 100 ms 广播 | Nav 侧监控超时 **定值 500 ms** |
 | 0x180A7D40 | FCU_SwapCmd | FCU → VCU | 事件 / 100 ms 重发 | **Nav 不消费** |
-| 0x1802407D | VCU_MotionSta | VCU → 总线 | 50 ms | 仅遥测（见 §6） |
-| 0x1806407D | VCU_HealthSta | VCU → 总线 | 500 ms | 仅遥测（见 §6） |
+| 0x1802407D | VCU_MotionSta | VCU → 总线 | 50 ms | 不参与授权；参与解锁检查和行驶中保护（`VCU_FB_TMO`，默认 200 ms，见 §3.4） |
+| 0x1806407D | VCU_HealthSta | VCU → 总线 | 500 ms | 不参与授权；Sys_Fault 参与解锁检查和行驶中保护（见 §3.4） |
 
 ### 3.1 Nav_Cmd（0x180C7D41，Nav → VCU）
 
 | 字节 | 信号 | 编码 |
 |---|---|---|
 | 0–1 | Target_Speed | int16 LE × 0.01 m/s，±5.00（原始 ±500） |
-| 2–3 | Target_Steer | int16 LE × 0.01°，±45.00（原始 ±4500），**左正** |
-| 4 | Work_On | 0 停 / 1 运行，电平保持 |
+| 2–3 | Target_Steer | int16 LE × 0.01°，±45.00（原始 ±4500），**正值=前轮左转**（v1.1 书面约定） |
+| 4 | Work_On | 0 停 / 1 运行，电平保持。0→1：升杆→到位→作业（限速 2 km/h）；1→0：停作业→降杆→运输（限速 5 km/h），进度经 NavSta.WorkFb 反馈。本期 `VCU_WORK_EN=0`，恒发 0 |
 | 5–6 | Work_Speed / Work_Dir | **固定发 0**（本产品 workdrv 仅启停，VCU 不消费这两字节） |
 | 7 | Seq | 当前授权会话序号，与 NavSta.Seq 一致才被消费 |
 
@@ -66,12 +68,16 @@
 | 1 | HandoverState | 0 空闲 / 1 INVITING / 2 WAIT_START / 3 完成 / 4 超时失败 / 5 Nav 拒绝 / 6 NAV_LOST / 7 RC_LOST |
 | 2 | Seq | 当前事务序号回显 |
 | 3 | HsErr | 0 无 / 1 Nav 无响应 / 2 自检故障 / 3 停稳超时 / 4 Nav_Cmd 断链 / 5 遥控链断 / 6 未授权帧忽略溢出 |
-| 4–7 | 保留 | 0（非零整帧丢弃） |
+| 4 | WorkFb（v1.1） | 0 运输就绪（行走 ≤5 km/h）/ 1 升/降杆中（行驶锁 0）/ 2 作业位就绪 / 3 作业中（行走 ≤2 km/h）/ 4 提升超时故障（行驶锁 0）；**>4 整帧丢弃** |
+| 5–7 | 保留 | 0（非零整帧丢弃） |
 
-### 3.4 遥测帧（不参与授权判定）
+WorkFb 自 VCU 公告激活起生效，激活前恒发 0（"反馈未激活"，不代表已确认运输位）。断链时 VCU 受控停车但提杆保持原位，WorkFb 如实上报。
 
-- **VCU_MotionSta**（0x1802407D，50 ms）：byte0–1 实际速度 ×0.01 m/s；byte2–3 实际转角 ×0.01°；byte5 bit0–3 Veh_State（0 初始化/1 就绪/2 运行/5 故障）、bit5 Failsafe。
-- **VCU_HealthSta**（0x1806407D，500 ms）：byte0 SOC %；byte1–2 电压 ×0.1 V（原始 ≤1000）；byte3–5 Drv1/2/3_Fault（供应商故障码，**码表由甲方提供**）；byte6 Sys_Fault（0 无/1 急停/2 链路断/3 FCU 超时/4 电池低温/5 电池高温/6 电量低/7 提升超时）。
+### 3.4 状态帧（不参与授权判定，参与解锁检查和行驶中保护）
+
+- **VCU_MotionSta**（0x1802407D，50 ms）：byte0–1 实际速度 ×0.01 m/s；byte2–3 实际转角 ×0.01°；byte5 bit0–3 Veh_State（0 初始化/1 就绪/2 运行/5 故障）、bit5 Failsafe。超过 `VCU_FB_TMO` 未收到或 Failsafe=1 → 禁止解锁 / 行驶中切 HOLD。
+- **VCU_HealthSta**（0x1806407D，500 ms）：byte0 SOC %；byte1–2 电压 ×0.1 V（原始 ≤1000）；byte3–5 Drv1/2/3_Fault（供应商故障码，**码表由甲方提供**）；byte6 Sys_Fault（0 无/1 急停/2 链路断/3 FCU 超时/4 电池低温/5 电池高温/6 电量低/7 提升超时）。HealthSta 800 ms 内新鲜且 Sys_Fault≠0 → 禁止解锁 / 行驶中切 HOLD。
+- `VCU_FB_TMO=0`（台架调试）时以上两帧都不检查。
 
 ## 4. 握手与核心规则（协议 04 章）
 
@@ -87,24 +93,28 @@
 
 - 主循环 10 ms，保证 50 ms 发帧抖动 ≤10 ms；授权沿立即发第一帧。
 - 自检顺序：IMU 健康（不过→0x06）→ RTK 达 `VCU_RTK_REQ`（不过→0x05）→ 通过（0）。
-- 解锁前检查（任一不满足禁止解锁）：NavSta 新鲜、`OpSource=2`、MotionSta 新鲜且无 Failsafe、HealthSta.Sys_Fault=0、RTK 达标。
-- 行驶中失效（失权/反馈异常/RTK 掉解超 `VCU_RTK_TMO`）→ 切 HOLD；**只要授权仍在就持续发 v=0 的 Nav_Cmd 不断流**（2026-10-11 双方确认）。
+- 解锁前检查（按此顺序，任一不满足禁止解锁）：NavSta 新鲜、`OpSource=2`、WorkFb 不为 1（`lift moving`）/4（`lift fault`）、MotionSta 新鲜且无 Failsafe、HealthSta.Sys_Fault=0、RTK 达标。
+- 行驶中失效（失权/WorkFb 变为 1 或 4/反馈异常/RTK 掉解超 `VCU_RTK_TMO`）→ 切 HOLD，提示 `VCU: <原因>, HOLD`（2 s 限频）；**只要授权仍在就持续发 v=0 的 Nav_Cmd 不断流**（2026-10-11 双方确认）。
+- 握手提示：HS→2 `VCU: wait RC start`；HS→3 `VCU: RC start OK`（遥控器已按 Ready）；HS→4/5 `VCU: handover failed`；HS→7 `VCU: RC link lost`。
+- WorkFb 提示：→1 `VCU: lift moving`；→4 `VCU: lift fault`；4→其他 `VCU: lift fault cleared`。
 - 作业电机：`VCU_WORK_EN=1` 时，AUTO 模式行驶中（v>0.02 m/s）自动置 Work_On=1，其余为 0。
 - 脚本崩溃 → 静默（VCU 看门狗收权停车，安全方向），约 1 s 后自动重启，重新等邀请。
 - 下发限幅：|v| ≤ min(`VCU_V_MAX`, 5.0)；|δ| ≤ §2 限幅。倒车默认关闭（`VCU_REV=0`）。
 
 ## 6. 遥测与地面站上报
 
-MotionSta / HealthSta 仅用于板载日志和地面站遥测，**授权判定只认 NavSta**。5 Hz 上报：
+**授权判定只认 NavSta**；MotionSta / HealthSta 除板载日志和地面站遥测外，还参与解锁检查和行驶中保护（§3.4、§5）。5 Hz 上报：
 
 | 名称 | 含义 |
 |---|---|
 | `VCU_MODE` | 0 NavSta 无效；1 遥控/切换中；2 无人 |
 | `VCU_FAULT` | Sys_Fault 1~7 直报；HsErr 报 0x10+码；驱动器故障报 0x100+码 |
 | `VCU_BATV` / `VCU_SOC` | HealthSta 电压 / 电量（仅在 HealthSta 1500 ms 内新鲜时发送，否则不发） |
-| `VCU_OK` | 综合就绪位（授权 + 反馈正常 + RTK 保持） |
+| `VCU_OK` | 综合就绪位（授权 + WorkFb 非 1/4 + 反馈正常 + RTK 保持） |
 
-板载日志 `VCU` 消息（50 Hz）：`CV,CD,AV,AD,Op,HS,Er,VS,FS,Ok,Fix` —— 指令 v/转角、实际 v/转角、OpSource、HandoverState、HsErr、Veh_State、Failsafe、就绪位、定位状态。
+`VCU_WORKFB`（NavSta.WorkFb 0～4）不在 5 Hz 里：变化时立即发一次，之后 1 Hz（NavSta 无效时不发）。
+
+板载日志 `VCU` 消息（50 Hz）：`CV,CD,AV,AD,Op,HS,Er,VS,FS,Ok,Fix,WF` —— 指令 v/转角、实际 v/转角、OpSource、HandoverState、HsErr、Veh_State、Failsafe、就绪位、定位状态、WorkFb。
 
 ## 7. 联调检查表
 
@@ -115,4 +125,6 @@ MotionSta / HealthSta 仅用于板载日志和地面站遥测，**授权判定�
 - [ ] **Target_Steer 符号实测（联调首项）**：正转角 → 车轮向左；与 MotionSta 反馈符号一致
 - [ ] 遥控器 Ready 0→1 边沿前 Nav_Cmd 不生效；HS=7 时 Nav 持续发帧、车辆保持静止
 - [ ] NavSta 拔线 500 ms：Nav 静默；恢复后等新邀请，不自动抢权
+- [ ] WorkFb：byte4=0/2/3 NavSta 有效可解锁；=1/4 解锁失败并提示；=5 或 byte5≠0 整帧丢弃（500 ms 后 NavSta lost）
+- [ ] 行驶中 WorkFb→1：切 HOLD，Nav_Cmd 仍 50 ms 周期发 v=0
 - [ ] 实测从最后有效 Nav_Cmd 到车辆停稳的最大时间/距离（甲方协议安全验证边界）
