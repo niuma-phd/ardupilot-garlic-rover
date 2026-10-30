@@ -29,9 +29,13 @@
  我方自身保护触发 (HOLD / RTK 掉解 / 升降杆) 时持续发 v=0 的 Nav_Cmd, 不断流, 授权保留
  (2026-10-11 双方确认)
 
- 运动学: Ackermann, w = v*tan(delta)/L -> delta = atan(w*L/v)
+ 运动学: Ackermann, a_lat = v^2*tan(delta)/L -> delta = atan(a_lat*L/v_ref^2), v_ref 为实际车速
+   农机 VCU 自己定车速 (运输约 5km/h, 作业约 2km/h), 只认走/停, 实际车速常与指令不同.
+   Rover 4.7.2 航点导航给的 w = a_lat / max(|v_des|, 1.0) (AR_PosControl, v_des 为期望车速),
+   这里先还原 a_lat, 再按实际车速换算转角.
+   v_ref: MotionSta 新鲜时用 VCU 回报车速, 否则用 AHRS 地速投到航向; 下限 VCU_VREF_MIN
    Target_Steer 正值 = 前轮左转 (v1.1 书面约定), 与 w 逆时针为正天然一致
-   delta 限幅 min(45deg, deg(atan(L/TURN_RADIUS))), |v|<0.05m/s 时保持上次转角
+   delta 限幅 min(45deg, deg(atan(L/TURN_RADIUS))), 指令 |v|<0.05m/s 时保持上次转角
 
  所需参数(与 garlic_rover/params/garlic_rover.param 一致):
    SCR_ENABLE=1  CAN_P2_DRIVER=2  CAN_D2_PROTOCOL=10  CAN_P2_BITRATE=500000
@@ -46,6 +50,8 @@
 local LOOP_MS = 10            -- 主循环 10ms, 保证 50ms 发帧抖动 <=10ms
 local TX_PERIOD_MS = 50       -- Nav_Cmd 发送周期 (协议定值)
 local NAVSTA_TMO_MS = 500     -- NavSta 监控超时 (协议定值)
+local MOTION_FRESH_MS = 200   -- MotionSta 车速用于转角换算的新鲜度
+local ATC_STEER_SPEED_MIN = 1.0  -- = AR_ATTCONTROL_STEER_SPEED_MIN (Rover 4.7.2), 升级固件时核对
 
 -- 脚本版本: 仓库里为 "dev", CI 打包 Release 时替换为 tag 名 (如 garlic.9)
 local SCRIPT_VERSION = "dev"
@@ -78,17 +84,17 @@ local ST_OK, ST_CAN, ST_GNSS, ST_IMU = 0x00, 0x02, 0x05, 0x06
 local CAPS = 0x03             -- bit0 速度/方向 + bit1 作业电机(仅启停)
 
 ---------------------------------------------------------------------------
--- 参数表 VCU_*  (序号 1~8 与旧版保持一致, 存量参数自动继承; 9/10 为新增)
+-- 参数表 VCU_*  (序号 1~8 与旧版保持一致, 存量参数自动继承; 9~11 为新增)
 ---------------------------------------------------------------------------
 local PARAM_TABLE_KEY = 71
-assert(param:add_table(PARAM_TABLE_KEY, "VCU_", 10), "VCU: could not add param table")
+assert(param:add_table(PARAM_TABLE_KEY, "VCU_", 11), "VCU: could not add param table")
 local function bind_add_param(name, idx, default)
   assert(param:add_param(PARAM_TABLE_KEY, idx, name, default), "VCU: could not add param " .. name)
   return Parameter("VCU_" .. name)
 end
 --[[ @Param: VCU_ENABLE  @DisplayName: 启用VCU CAN桥接  @Values: 0:关,1:开 --]]
 local VCU_ENABLE  = bind_add_param("ENABLE", 1, 1)
---[[ @Param: VCU_DBG_HZ  @DisplayName: 调试量(VCU_CMD_V/W/D, VCU_V/W)上报地面站的频率(Hz), 0=不发. 板载日志不受影响 --]]
+--[[ @Param: VCU_DBG_HZ  @DisplayName: 调试量(VCU_CMD_V/W/D, VCU_VREF, VCU_V/W)上报地面站的频率(Hz), 0=不发. 板载日志不受影响 --]]
 local VCU_DBG_HZ  = bind_add_param("DBG_HZ", 2, 0)
 --[[ @Param: VCU_FB_TMO  @DisplayName: MotionSta反馈超时(ms), 0=不检查反馈(台架调试用) --]]
 local VCU_FB_TMO  = bind_add_param("FB_TMO", 3, 200)
@@ -106,6 +112,8 @@ local VCU_RTK_TMO = bind_add_param("RTK_TMO", 8, 3000)
 local VCU_W_BASE  = bind_add_param("W_BASE", 9, 1.2)
 --[[ @Param: VCU_WORK_EN  @DisplayName: 允许作业电机启停(AUTO模式行驶中自动开)  @Values: 0:否,1:是 --]]
 local VCU_WORK_EN = bind_add_param("WORK_EN", 10, 0)
+--[[ @Param: VCU_VREF_MIN  @DisplayName: 转角换算用实际车速的下限(m/s), 起步时实际车速接近 0, 防止转角乱跳 --]]
+local VCU_VREF_MIN = bind_add_param("VREF_MIN", 11, 0.3)
 
 ---------------------------------------------------------------------------
 -- CAN
@@ -221,6 +229,19 @@ local function feedback_ok(now)
     return false, string.format("fault 0x%02X", health.sys)
   end
   return true, nil
+end
+
+-- AHRS 前向速度: EKF 地速投到航向上 (同 AR_AttitudeControl::get_forward_speed)
+local function ahrs_fwd_speed()
+  local gs = ahrs:groundspeed_vector()
+  local yaw = ahrs:get_yaw_rad()
+  return gs:x() * math.cos(yaw) + gs:y() * math.sin(yaw)
+end
+
+-- 转角换算用的实际车速: MotionSta 新鲜时用 VCU 回报车速, 否则用 AHRS 前向速度
+local function actual_speed(now, ahrs_v)
+  if motion.ms > 0 and now - motion.ms <= MOTION_FRESH_MS then return motion.v end
+  return ahrs_v
 end
 
 -- WorkFb 检查: 升/降杆中或提升故障时 VCU 行驶锁 0, 禁止解锁 / 行驶中切 HOLD
@@ -379,10 +400,11 @@ local function update()
   local mode = vehicle:get_mode()
   local driving = armed and DRIVE_MODES[mode] == true
 
-  local v, w = 0, 0
+  local v, w, v_des = 0, 0, 0
   if driving then
     if ok then
       v, w = get_vw()
+      v_des = v
       if VCU_REV:get() <= 0 and v < 0 then v = 0 end
       v = clamp(v, -VCU_V_MAX:get(), VCU_V_MAX:get())
     else
@@ -395,13 +417,18 @@ local function update()
     end
   end
 
-  -- Ackermann 运动学: w -> 前轮转角 delta (左转为正), 低速保持上次转角
+  -- Ackermann 运动学: w -> 前轮转角 delta (左转为正), 按实际车速换算, 指令低速时保持上次转角
   local wheelbase = math.max(VCU_W_BASE:get(), 0.3)
   local turn_r = param:get("TURN_RADIUS") or 1.0
   local steer_max = math.min(45.0, math.deg(math.atan(wheelbase / math.max(turn_r, 0.3))))
+  local ahrs_v = ahrs_fwd_speed()
+  local v_ref = math.max(math.abs(actual_speed(now, ahrs_v)), VCU_VREF_MIN:get(), 0.05)
   local steer_deg = last_steer_deg
   if math.abs(v) >= 0.05 then
-    steer_deg = clamp(math.deg(math.atan(w * wheelbase / v)), -steer_max, steer_max)
+    -- 还原导航的横向加速度 a_lat = w * max(|v_des|, 1.0) (带 v_des 符号), 再 tan(delta) = a_lat*L/v_ref^2
+    local s = math.max(math.abs(v_des), ATC_STEER_SPEED_MIN)
+    if v_des < 0 then s = -s end
+    steer_deg = clamp(math.deg(math.atan(w * s * wheelbase / (v_ref * v_ref))), -steer_max, steer_max)
     last_steer_deg = steer_deg
   end
 
@@ -416,14 +443,15 @@ local function update()
   end
   was_authorized = authorized
 
-  -- 板载日志 (50Hz): 指令 v/转角 与 VCU 实际 v/转角、操作源、握手状态、故障、定位、作业状态
+  -- 板载日志 (50Hz): 指令 v/转角 与 VCU 实际 v/转角、操作源、握手状态、故障、定位、作业状态、
+  -- 转角换算用车速 VR 和 AHRS 前向速度 AS (与 AV 对比可看打滑)
   if now - last_log_ms >= 20 then
     last_log_ms = now
-    logger:write("VCU", "CV,CD,AV,AD,Op,HS,Er,VS,FS,Ok,Fix,WF", "ffffBBBBBBBB",
+    logger:write("VCU", "CV,CD,AV,AD,Op,HS,Er,VS,FS,Ok,Fix,WF,VR,AS", "ffffBBBBBBBBff",
                  v, steer_deg, motion.v, motion.steer_deg,
                  navsta_valid and navsta.op or 0, navsta_valid and navsta.hs or 0,
                  navsta.err, clamp(motion.veh, 0, 255), motion.failsafe and 1 or 0,
-                 ok and 1 or 0, fix, navsta.wfb)
+                 ok and 1 or 0, fix, navsta.wfb, v_ref, ahrs_v)
   end
 
   -- 5Hz 上报地面站 (客户地面站只用这 5 个值, 4G 按流量计费)
@@ -460,6 +488,7 @@ local function update()
     gcs:send_named_float("VCU_CMD_V", v)
     gcs:send_named_float("VCU_CMD_W", w)
     gcs:send_named_float("VCU_CMD_D", steer_deg)
+    gcs:send_named_float("VCU_VREF", v_ref)
     gcs:send_named_float("VCU_V", motion.v)
     gcs:send_named_float("VCU_W", motion.v * math.tan(math.rad(motion.steer_deg)) / wheelbase)
   end

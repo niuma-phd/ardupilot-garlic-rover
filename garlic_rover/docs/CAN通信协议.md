@@ -25,7 +25,11 @@
 - 线速度 v：前进为正，m/s。
 - 角速度 ω：俯视逆时针（左转）为正，rad/s。
 - 前轮转角 δ：**左转为正**（2026-10-11 双方确认，v1.1 协议 3.1 书面约定），deg。
-- Ackermann 换算在 **Nav 侧**完成：δ = atan(ω·L / v)，L 为等效轴距（参数 `VCU_W_BASE`，默认 1.2 m）；|v| < 0.05 m/s 时保持上次转角，不回正；δ 限幅 min(45°, atan(L/`TURN_RADIUS`) 换算值)。
+- Ackermann 换算在 **Nav 侧**完成，按**实际车速**换算：δ = atan(a·L / v_ref²)，L 为等效轴距（参数 `VCU_W_BASE`，默认 1.2 m）。
+  - 农机 VCU 自己定车速（运输约 5 km/h、作业约 2 km/h），只认走 / 停，实际车速常和 Target_Speed 不同（10-30 台架：指令 0.3～0.6 m/s，实际约 0.85 m/s）。
+  - a 为导航要的横向加速度。Rover 4.7.2 航点导航（`AR_PosControl`）给出的期望转弯角速度是 ω = a / max(|v_des|, 1.0)，v_des 为**期望**车速、下限 1.0 m/s（`AR_ATTCONTROL_STEER_SPEED_MIN`），所以脚本先还原 a = ω·max(|v_des|, 1.0)。升级固件时要核对这个常数。
+  - v_ref：VCU_MotionSta 200 ms 内新鲜时用其实际速度；否则用 AHRS 前向速度（EKF 地速投到航向上）。下限 `VCU_VREF_MIN`（默认 0.3 m/s），防止起步时转角乱跳。
+  - 指令 |v| < 0.05 m/s 时保持上次转角，不回正；δ 限幅 min(45°, atan(L/`TURN_RADIUS`) 换算值)。
 
 ## 3. 报文列表
 
@@ -114,7 +118,9 @@ WorkFb 自 VCU 公告激活起生效，激活前恒发 0（"反馈未激活"，�
 
 `VCU_WORKFB`（NavSta.WorkFb 0～4）不在 5 Hz 里：变化时立即发一次，之后 1 Hz（NavSta 无效时不发）。
 
-板载日志 `VCU` 消息（50 Hz）：`CV,CD,AV,AD,Op,HS,Er,VS,FS,Ok,Fix,WF` —— 指令 v/转角、实际 v/转角、OpSource、HandoverState、HsErr、Veh_State、Failsafe、就绪位、定位状态、WorkFb。
+板载日志 `VCU` 消息（50 Hz）：`CV,CD,AV,AD,Op,HS,Er,VS,FS,Ok,Fix,WF,VR,AS` —— 指令 v/转角、实际 v/转角、OpSource、HandoverState、HsErr、Veh_State、Failsafe、就绪位、定位状态、WorkFb、转角换算用车速 v_ref、AHRS 前向速度。AV 明显大于 AS 说明打滑（MotionSta 车速偏大），这时应考虑改用 AHRS 车速。
+
+调试量（`VCU_DBG_HZ` > 0 时上报）：`VCU_CMD_V/W/D`、`VCU_VREF`、`VCU_V/W`。
 
 ## 7. 联调检查表
 
