@@ -2,12 +2,15 @@
  vcu_can.lua  大蒜播种车 Nav(飞控) <-> 底盘VCU  CAN 桥接脚本
  固件: ArduPilot Rover 4.7.2 + 补丁 (飞控 X-MAV AP-H743v3)
 
- 协议: 《Nav <-> VCU CAN 通讯协议 v1.0》(2026-10-10, 甲方定版)
+ 协议: 《Nav <-> VCU CAN 通讯协议 v1.1》(2026-10-30, 甲方; v1.0 为 2026-10-10 定版)
    总线 CAN3, 500 kbit/s, 29 位扩展帧 (IDE=1), 经典 CAN, DLC=8, Intel 小端
    Nav 源地址 0x41, VCU 源地址 0x7D
    Nav_Cmd     0x180C7D41  Nav -> VCU  50ms 周期 (授权期间不得断流, VCU 看门狗 100ms)
    Nav_HsAck   0x180D7D41  Nav -> VCU  邀请 (HandoverState=1) 后 2s 内应答, 每事务只答一次
    VCU_NavSta  0x180B417D  VCU -> 总线 100ms 广播, 授权唯一真相, Nav 监控超时定值 500ms
+     byte4 WorkFb (v1.1): 0 运输就绪 / 1 升降杆中 / 2 作业位就绪 / 3 作业中 / 4 提升超时故障,
+     >4 整帧无效; byte5~7 保留. VCU 公告激活前恒发 0.
+     WorkFb=1/4 (行驶锁 0) 时禁止解锁, 行驶中切 HOLD 并持续发 v=0
    FCU_SwapCmd 0x180A7D40  参考帧, Nav 不消费
    监听帧 (不参与 VCU 授权判定, 授权只看 NavSta; 但用于解锁检查和行驶中保护):
    VCU_MotionSta 0x1802407D  50ms
@@ -23,11 +26,11 @@
    5. 断流即停车: 授权期间必须持续发帧 (含 v=0), 断流 >100ms 触发 HsErr=4 收权
    6. Nav 无启动/急停权限: 车辆只能由遥控器 Ready 0->1 新边沿启动, 急停仅硬件回路
 
- 双方确认补充 (2026-10-11):
-   - Target_Steer 左转为正 (与 w 逆时针为正 -> delta=atan(w*L/v) 天然一致)
-   - 我方自身保护触发 (HOLD / RTK 掉解) 时持续发 v=0 的 Nav_Cmd, 不断流, 授权保留
+ 我方自身保护触发 (HOLD / RTK 掉解 / 升降杆) 时持续发 v=0 的 Nav_Cmd, 不断流, 授权保留
+ (2026-10-11 双方确认)
 
- 运动学: Ackermann, w = v*tan(delta)/L -> delta = atan(w*L/v), 左正
+ 运动学: Ackermann, w = v*tan(delta)/L -> delta = atan(w*L/v)
+   Target_Steer 正值 = 前轮左转 (v1.1 书面约定), 与 w 逆时针为正天然一致
    delta 限幅 min(45deg, deg(atan(L/TURN_RADIUS))), |v|<0.05m/s 时保持上次转角
 
  所需参数(与 garlic_rover/params/garlic_rover.param 一致):
@@ -464,7 +467,7 @@ local function update()
   return update, LOOP_MS
 end
 
-gcs:send_text(MAV_INFO, "VCU: CAN bridge loaded (Nav v1.0) " .. SCRIPT_VERSION)
+gcs:send_text(MAV_INFO, "VCU: CAN bridge loaded (Nav v1.1) " .. SCRIPT_VERSION)
 
 -- 出错时静默 (VCU 看门狗 100ms 后受控停车收权, 安全方向), 1s 后重启脚本
 local function protected_wrapper()
