@@ -161,7 +161,7 @@ end
 -- 接收状态
 ---------------------------------------------------------------------------
 -- NavSta: 授权唯一真相
-local navsta = { ms = 0, op = 0, hs = 0, seq = 0, err = 0 }
+local navsta = { ms = 0, op = 0, hs = 0, seq = 0, err = 0, wfb = 0 }
 -- MotionSta / HealthSta: 不参与 VCU 授权判定 (授权只看 NavSta), 但用于解锁检查和行驶中保护:
 --   反馈超时 / Failsafe / HealthSta 故障码非 0 时禁止解锁, 行驶中切 HOLD 并持续发 v=0; VCU_FB_TMO=0 时不检查
 local motion = { ms = 0, v = 0, steer_deg = 0, veh = -1, failsafe = false }
@@ -175,13 +175,14 @@ local function read_frames()
     if f:isExtended() and f:dlc() == 8 then
       local id = f:id_signed()   -- 掩码后的 29 位 ID, 我们的 ID 均 <0x7FFFFFFF
       if id == ID_NAV_STA then
-        -- 校验: 保留字节 4~7 为 0, 枚举不越界, 全对才刷新时钟
-        if f:data(4) == 0 and f:data(5) == 0 and f:data(6) == 0 and f:data(7) == 0
-           and f:data(0) <= 2 and f:data(1) <= 7 and f:data(3) <= 6 then
+        -- 校验: 保留字节 5~7 为 0, 枚举不越界 (WorkFb >4 非法), 全对才刷新时钟
+        if f:data(5) == 0 and f:data(6) == 0 and f:data(7) == 0
+           and f:data(0) <= 2 and f:data(1) <= 7 and f:data(3) <= 6 and f:data(4) <= 4 then
           navsta.op  = f:data(0)
           navsta.hs  = f:data(1)
           navsta.seq = f:data(2)
           navsta.err = f:data(3)
+          navsta.wfb = f:data(4)
           navsta.ms  = millis():toint()
         end
       elseif id == ID_MOTION then
