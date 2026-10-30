@@ -67,6 +67,8 @@ local ID_HEALTH   = 0x1806407D
 local OP_NAV = 2              -- OpSource: 0 遥控, 1 切换中, 2 无人
 local HS_INVITING, HS_WAIT_START = 1, 2
 local HS_TIMEOUT, HS_REJECTED, HS_NAV_LOST, HS_RC_LOST = 4, 5, 6, 7
+-- WorkFb (v1.1): 0 运输就绪, 1 升/降杆中(行驶锁 0), 2 作业位就绪, 3 作业中, 4 提升超时故障(行驶锁 0)
+local WFB_LIFTING, WFB_LIFT_FAULT = 1, 4
 
 -- SelfTest 故障码 (协议 3.2)
 local ST_OK, ST_CAN, ST_GNSS, ST_IMU = 0x00, 0x02, 0x05, 0x06
@@ -218,6 +220,13 @@ local function feedback_ok(now)
   return true, nil
 end
 
+-- WorkFb 检查: 升/降杆中或提升故障时 VCU 行驶锁 0, 禁止解锁 / 行驶中切 HOLD
+local function workfb_block()
+  if navsta.wfb == WFB_LIFTING then return "lift moving" end
+  if navsta.wfb == WFB_LIFT_FAULT then return "lift fault" end
+  return nil
+end
+
 -- RTK 检查. 返回: 当前是否满足, 行驶中是否仍可继续(允许短暂掉解 VCU_RTK_TMO), 当前定位状态
 local last_rtk_ok_ms = 0
 local function rtk_check(now)
@@ -284,7 +293,9 @@ local last_log_ms = 0
 local last_gcs_ms = 0
 local last_dbg_ms = 0
 local last_warn_ms = 0
+local last_wfb_ms = 0
 local prev_hs = 0
+local prev_wfb = 0
 local was_authorized = false
 local last_steer_deg = 0      -- |v|<0.05 时保持上次转角
 
@@ -319,23 +330,44 @@ local function update()
   end
   if navsta_valid then prev_hs = navsta.hs end
 
+  -- WorkFb 边沿提示 + 遥测: 变化时立即发 VCU_WORKFB, 之后 1 Hz (4G 按流量计费, 不进 5 Hz)
+  if navsta_valid then
+    local wfb_changed = navsta.wfb ~= prev_wfb
+    if wfb_changed then
+      if prev_wfb == WFB_LIFT_FAULT then gcs:send_text(MAV_INFO, "VCU: lift fault cleared") end
+      if navsta.wfb == WFB_LIFTING then
+        gcs:send_text(MAV_WARN, "VCU: lift moving")
+      elseif navsta.wfb == WFB_LIFT_FAULT then
+        gcs:send_text(MAV_CRIT, "VCU: lift fault")
+      end
+      prev_wfb = navsta.wfb
+    end
+    if wfb_changed or now - last_wfb_ms >= 1000 then
+      last_wfb_ms = now
+      gcs:send_named_float("VCU_WORKFB", navsta.wfb)
+    end
+  end
+
   local fb_ok, fb_why = feedback_ok(now)
   local rtk_now, rtk_keep, fix = rtk_check(now)
+  local wfb_why = workfb_block()
 
-  -- 解锁前检查: 已授权 + VCU 反馈正常 + 当前满足 RTK 要求
+  -- 解锁前检查: 已授权 + 提杆不在动作/故障 + VCU 反馈正常 + 当前满足 RTK 要求
   if auth_id then
     if not navsta_valid then arming:set_aux_auth_failed(auth_id, "VCU: NavSta lost")
     elseif not authorized then arming:set_aux_auth_failed(auth_id, "VCU: not authorized")
+    elseif wfb_why then arming:set_aux_auth_failed(auth_id, "VCU: " .. wfb_why)
     elseif not fb_ok then arming:set_aux_auth_failed(auth_id, "VCU: " .. fb_why)
     elseif not rtk_now then arming:set_aux_auth_failed(auth_id, "VCU: no RTK fix")
     else arming:set_aux_auth_passed(auth_id) end
   end
 
-  -- 行驶中保护: 失权/反馈异常/RTK 掉解 -> 切 HOLD, 但只要授权还在就持续发 v=0 帧 (不断流)
-  local ok = navsta_valid and authorized and fb_ok and rtk_keep
+  -- 行驶中保护: 失权/升降杆/反馈异常/RTK 掉解 -> 切 HOLD, 但只要授权还在就持续发 v=0 帧 (不断流)
+  local ok = navsta_valid and authorized and wfb_why == nil and fb_ok and rtk_keep
   local why = fb_why
   if not navsta_valid then why = "NavSta lost"
   elseif not authorized then why = "not authorized"
+  elseif wfb_why then why = wfb_why
   elseif fb_ok and not rtk_keep then why = "RTK lost" end
 
   local armed = arming:is_armed()
@@ -379,14 +411,14 @@ local function update()
   end
   was_authorized = authorized
 
-  -- 板载日志 (50Hz): 指令 v/转角 与 VCU 实际 v/转角、操作源、握手状态、故障、定位
+  -- 板载日志 (50Hz): 指令 v/转角 与 VCU 实际 v/转角、操作源、握手状态、故障、定位、作业状态
   if now - last_log_ms >= 20 then
     last_log_ms = now
-    logger:write("VCU", "CV,CD,AV,AD,Op,HS,Er,VS,FS,Ok,Fix", "ffffBBBBBBB",
+    logger:write("VCU", "CV,CD,AV,AD,Op,HS,Er,VS,FS,Ok,Fix,WF", "ffffBBBBBBBB",
                  v, steer_deg, motion.v, motion.steer_deg,
                  navsta_valid and navsta.op or 0, navsta_valid and navsta.hs or 0,
                  navsta.err, clamp(motion.veh, 0, 255), motion.failsafe and 1 or 0,
-                 ok and 1 or 0, fix)
+                 ok and 1 or 0, fix, navsta.wfb)
   end
 
   -- 5Hz 上报地面站 (客户地面站只用这 5 个值, 4G 按流量计费)
