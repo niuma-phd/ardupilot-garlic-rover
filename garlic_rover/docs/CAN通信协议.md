@@ -48,7 +48,7 @@
 |---|---|---|
 | 0–1 | Target_Speed | int16 LE × 0.01 m/s，±5.00（原始 ±500） |
 | 2–3 | Target_Steer | int16 LE × 0.01°，±45.00（原始 ±4500），**正值=前轮左转**（v1.1 书面约定） |
-| 4 | Work_On | 0 停 / 1 运行，电平保持。0→1：升杆→到位→作业（限速 2 km/h）；1→0：停作业→降杆→运输（限速 5 km/h），进度经 NavSta.WorkFb 反馈。本期 `VCU_WORK_EN=0`，恒发 0 |
+| 4 | Work_On | 0 停 / 1 运行，电平保持。0→1：升杆→到位→作业（限速 2 km/h）；1→0：停作业→降杆→运输（限速 5 km/h），进度经 NavSta.WorkFb 反馈。由地面站 / 航线请求（见 §5），`VCU_WORK_EN=0`（本期默认）时恒发 0 |
 | 5–6 | Work_Speed / Work_Dir | **固定发 0**（本产品 workdrv 仅启停，VCU 不消费这两字节） |
 | 7 | Seq | 当前授权会话序号，与 NavSta.Seq 一致才被消费 |
 
@@ -101,7 +101,11 @@ WorkFb 自 VCU 公告激活起生效，激活前恒发 0（"反馈未激活"，�
 - 行驶中失效（失权/WorkFb 变为 1 或 4/反馈异常/RTK 掉解超 `VCU_RTK_TMO`）→ 切 HOLD，提示 `VCU: <原因>, HOLD`（2 s 限频）；**只要授权仍在就持续发 v=0 的 Nav_Cmd 不断流**（2026-10-11 双方确认）。
 - 握手提示：HS→2 `VCU: wait RC start`；HS→3 `VCU: RC start OK`（遥控器已按 Ready）；HS→4/5 `VCU: handover failed`；HS→7 `VCU: RC link lost`。
 - WorkFb 提示：→1 `VCU: lift moving`；→4 `VCU: lift fault`；4→其他 `VCU: lift fault cleared`。
-- 作业电机：`VCU_WORK_EN=1` 时，AUTO 模式行驶中（v>0.02 m/s）自动置 Work_On=1，其余为 0。
+- 作业（Work_On）：`VCU_WORK_EN=1` 且已授权时，跟随 RC 辅助功能 **SCRIPTING1（300）** 的电平请求，不再跟 AUTO 模式和车速绑定（否则 VCU 动杆时行驶锁 0 → 切 HOLD → Work_On 掉 0 → 收杆，反复升降）。
+  - 地面站下发 `MAV_CMD_DO_AUX_FUNCTION`（param1=300，param2=2 升杆作业 / 0 收杆）；航线末尾也放一条 `DO_AUX_FUNCTION 300 低`，作为收杆兜底（4G 断开时也能收杆）。
+  - AB 线单条：AUTO 到对准点停 → 请求 2，等 WorkFb=3（=4 为故障）→ AUTO 起点到终点 → 航线末尾请求 0，等 WorkFb=0。
+  - 失权（OpSource≠2 / NavSta 丢失）时脚本把请求清零并提示 `VCU: work request cleared`；恢复授权后保持 0，由地面站重新下发（协议：断链后提杆保持原位，由 Nav 重新决策）。
+  - 升 / 降杆期间 WorkFb=1，车照样切 HOLD、持续发 v=0。Work_On 变化后 30 s 内的升降杆，以及静止时的升降杆，都是作业流程，**不报** `VCU: lift moving, HOLD`；行驶中出现非预期的 WorkFb=1/4 仍报警。
 - 脚本崩溃 → 静默（VCU 看门狗收权停车，安全方向），约 1 s 后自动重启，重新等邀请。
 - 下发限幅：|v| ≤ min(`VCU_V_MAX`, 5.0)；|δ| ≤ §2 限幅。倒车默认关闭（`VCU_REV=0`）。
 
@@ -118,7 +122,11 @@ WorkFb 自 VCU 公告激活起生效，激活前恒发 0（"反馈未激活"，�
 
 `VCU_WORKFB`（NavSta.WorkFb 0～4）不在 5 Hz 里：变化时立即发一次，之后 1 Hz（NavSta 无效时不发）。
 
+`VCU_WREQ`（作业请求 0/1，即 SCRIPTING1 是否为高）：变化时立即发；`VCU_WORK_EN=1` 时随 `VCU_WORKFB` 1 Hz 补发。
+
 板载日志 `VCU` 消息（50 Hz）：`CV,CD,AV,AD,Op,HS,Er,VS,FS,Ok,Fix,WF,VR,AS` —— 指令 v/转角、实际 v/转角、OpSource、HandoverState、HsErr、Veh_State、Failsafe、就绪位、定位状态、WorkFb、转角换算用车速 v_ref、AHRS 前向速度。AV 明显大于 AS 说明打滑（MotionSta 车速偏大），这时应考虑改用 AHRS 车速。
+
+板载日志 `VCUW` 消息（50 Hz，Lua 日志单条最多 14 列所以单独记）：`WR,WO` —— 作业请求、实际下发的 Work_On。
 
 调试量（`VCU_DBG_HZ` > 0 时上报）：`VCU_CMD_V/W/D`、`VCU_VREF`、`VCU_V/W`。
 

@@ -10,7 +10,9 @@
    VCU_NavSta  0x180B417D  VCU -> 总线 100ms 广播, 授权唯一真相, Nav 监控超时定值 500ms
      byte4 WorkFb (v1.1): 0 运输就绪 / 1 升降杆中 / 2 作业位就绪 / 3 作业中 / 4 提升超时故障,
      >4 整帧无效; byte5~7 保留. VCU 公告激活前恒发 0.
-     WorkFb=1/4 (行驶锁 0) 时禁止解锁, 行驶中切 HOLD 并持续发 v=0
+     WorkFb=1/4 (行驶锁 0) 时禁止解锁, 行驶中切 HOLD 并持续发 v=0 (静止时升/降杆不报警)
+   Work_On: VCU_WORK_EN=1 且已授权时, 跟随 SCRIPTING1 (RC 辅助功能 300) 的电平请求;
+     地面站 / 航线用 MAV_CMD_DO_AUX_FUNCTION(300, 2=升杆作业 / 0=收杆) 下发. 失权时请求清零
    FCU_SwapCmd 0x180A7D40  参考帧, Nav 不消费
    监听帧 (不参与 VCU 授权判定, 授权只看 NavSta; 但用于解锁检查和行驶中保护):
    VCU_MotionSta 0x1802407D  50ms
@@ -52,6 +54,8 @@ local TX_PERIOD_MS = 50       -- Nav_Cmd 发送周期 (协议定值)
 local NAVSTA_TMO_MS = 500     -- NavSta 监控超时 (协议定值)
 local MOTION_FRESH_MS = 200   -- MotionSta 车速用于转角换算的新鲜度
 local ATC_STEER_SPEED_MIN = 1.0  -- = AR_ATTCONTROL_STEER_SPEED_MIN (Rover 4.7.2), 升级固件时核对
+local AUX_WORK = 300          -- 作业请求: RC 辅助功能 SCRIPTING1, 地面站/航线用 DO_AUX_FUNCTION 置高/低
+local WORK_LIFT_EXPECT_MS = 30000  -- Work_On 变化后多久内的升/降杆算我方请求的 (VCU 动杆超时 10~15 s)
 
 -- 脚本版本: 仓库里为 "dev", CI 打包 Release 时替换为 tag 名 (如 garlic.9)
 local SCRIPT_VERSION = "dev"
@@ -110,7 +114,7 @@ local VCU_RTK_REQ = bind_add_param("RTK_REQ", 7, 2)
 local VCU_RTK_TMO = bind_add_param("RTK_TMO", 8, 3000)
 --[[ @Param: VCU_W_BASE  @DisplayName: 等效轴距(m): 前辊转向轴到后辊轴线, Ackermann 运动学换算用 --]]
 local VCU_W_BASE  = bind_add_param("W_BASE", 9, 1.2)
---[[ @Param: VCU_WORK_EN  @DisplayName: 允许作业电机启停(AUTO模式行驶中自动开)  @Values: 0:否,1:是 --]]
+--[[ @Param: VCU_WORK_EN  @DisplayName: 允许作业(Work_On): 1 时按地面站/航线的 SCRIPTING1 请求升杆作业  @Values: 0:否,1:是 --]]
 local VCU_WORK_EN = bind_add_param("WORK_EN", 10, 0)
 --[[ @Param: VCU_VREF_MIN  @DisplayName: 转角换算用实际车速的下限(m/s), 起步时实际车速接近 0, 防止转角乱跳 --]]
 local VCU_VREF_MIN = bind_add_param("VREF_MIN", 11, 0.3)
@@ -244,6 +248,12 @@ local function actual_speed(now, ahrs_v)
   return ahrs_v
 end
 
+-- 作业请求 (电平保持): SCRIPTING1 为 HIGH 时请求 Work_On=1; 从未设置过为 nil, 按 0
+local function work_request()
+  local pos = rc:get_aux_cached(AUX_WORK)
+  return pos ~= nil and pos >= 2
+end
+
 -- WorkFb 检查: 升/降杆中或提升故障时 VCU 行驶锁 0, 禁止解锁 / 行驶中切 HOLD
 local function workfb_block()
   if navsta.wfb == WFB_LIFTING then return "lift moving" end
@@ -320,6 +330,9 @@ local last_warn_ms = 0
 local last_wfb_ms = 0
 local prev_hs = 0
 local prev_wfb = 0
+local prev_work_req = false
+local prev_work_on = false
+local last_work_change_ms = -100000   -- Work_On 上次变化时刻 (升/降杆在此后 WORK_LIFT_EXPECT_MS 内属预期)
 local was_authorized = false
 local last_steer_deg = 0      -- |v|<0.05 时保持上次转角
 
@@ -371,6 +384,8 @@ local function update()
     if wfb_changed or now - last_wfb_ms >= 1000 then
       last_wfb_ms = now
       gcs:send_named_float("VCU_WORKFB", navsta.wfb)
+      -- 作业请求随 WorkFb 1 Hz 补发 (变化时另有立即发送), 地面站重连后也能核对
+      if VCU_WORK_EN:get() > 0 then gcs:send_named_float("VCU_WREQ", work_request() and 1 or 0) end
     end
   end
 
@@ -410,7 +425,12 @@ local function update()
     else
       vehicle:set_mode(MODE_HOLD)
       driving = false
-      if now - last_warn_ms > 2000 then
+      -- 我方请求的升/降杆 (Work_On 刚变过) 或静止时升/降杆, 是作业流程 (对准点放杆、终点收杆),
+      -- 只切 HOLD 不报警; 行驶中出现非预期的升降杆才报
+      local expected = now - last_work_change_ms < WORK_LIFT_EXPECT_MS
+      local still = math.abs(AR_AttitudeControl:get_desired_speed()) < 0.05
+                    and math.abs(actual_speed(now, ahrs_fwd_speed())) < 0.1
+      if not (why == "lift moving" and (expected or still)) and now - last_warn_ms > 2000 then
         gcs:send_text(MAV_WARN, "VCU: " .. why .. ", HOLD")
         last_warn_ms = now
       end
@@ -432,8 +452,23 @@ local function update()
     last_steer_deg = steer_deg
   end
 
-  -- 作业电机: 仅启停 (Work_Speed/Work_Dir 固定 0), AUTO 行驶中自动开
-  local work_on = VCU_WORK_EN:get() > 0 and mode == MODE_AUTO and driving and v > 0.02
+  -- 作业 (Work_On): 由地面站/航线经 SCRIPTING1 请求, 电平保持, 不跟模式和车速走 (v1.1: 0->1 升杆进入作业,
+  -- 1->0 降杆回运输, 动杆期间 WorkFb=1 行驶锁 0). Work_Speed/Work_Dir 固定 0.
+  -- 失权 (OpSource!=2 / NavSta 丢失) 时清掉请求: 恢复授权后保持 0, 由地面站重新下发 (协议: 断链后由 Nav 重新决策)
+  if was_authorized and not authorized and work_request() then
+    rc:run_aux_function(AUX_WORK, 0)
+    gcs:send_text(MAV_WARN, "VCU: work request cleared")
+  end
+  local work_req = work_request()
+  local work_on = VCU_WORK_EN:get() > 0 and authorized and work_req
+  if work_on ~= prev_work_on then
+    prev_work_on = work_on
+    last_work_change_ms = now
+  end
+  if work_req ~= prev_work_req then
+    prev_work_req = work_req
+    gcs:send_named_float("VCU_WREQ", work_req and 1 or 0)
+  end
 
   -- 授权期间 50ms 周期发送, 断流 >100ms 会被 VCU 收权; 授权沿立即发第一帧
   if authorized and not was_authorized then last_tx_ms = 0 end
@@ -445,6 +480,7 @@ local function update()
 
   -- 板载日志 (50Hz): 指令 v/转角 与 VCU 实际 v/转角、操作源、握手状态、故障、定位、作业状态、
   -- 转角换算用车速 VR 和 AHRS 前向速度 AS (与 AV 对比可看打滑)
+  -- Lua 日志最多 14 列, 作业请求 WR 与实际下发的 Work_On WO 单独记在 VCUW
   if now - last_log_ms >= 20 then
     last_log_ms = now
     logger:write("VCU", "CV,CD,AV,AD,Op,HS,Er,VS,FS,Ok,Fix,WF,VR,AS", "ffffBBBBBBBBff",
@@ -452,6 +488,7 @@ local function update()
                  navsta_valid and navsta.op or 0, navsta_valid and navsta.hs or 0,
                  navsta.err, clamp(motion.veh, 0, 255), motion.failsafe and 1 or 0,
                  ok and 1 or 0, fix, navsta.wfb, v_ref, ahrs_v)
+    logger:write("VCUW", "WR,WO", "BB", work_req and 1 or 0, work_on and 1 or 0)
   end
 
   -- 5Hz 上报地面站 (客户地面站只用这 5 个值, 4G 按流量计费)
