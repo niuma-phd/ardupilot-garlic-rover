@@ -11,7 +11,7 @@
 ## 运行
 
 ```bash
-bash garlic_rover/sitl/run_all.sh                # 三套测试依次跑，用仓库里的 scripts/vcu_can.lua
+bash garlic_rover/sitl/run_all.sh                # 四套测试依次跑，用仓库里的 scripts/vcu_can.lua
 bash garlic_rover/sitl/run.sh "" vcu_work_test.py   # 只跑一套
 ```
 
@@ -22,6 +22,7 @@ bash garlic_rover/sitl/run.sh "" vcu_work_test.py   # 只跑一套
 | `vcu_test.py` | 协议 v1.1 回归：上电静默、HsAck、50 ms 周期、WorkFb 0～4 解锁检查和提示、行驶中 WorkFb→1 切 HOLD 且不断流、WorkFb=5 / byte5≠0 整帧无效、HS 2→3 `RC start OK` |
 | `vcu_steer_test.py` | 转角按实际车速换算：MotionSta 报指令的 1.5 倍时，v_ref 跟 MotionSta、转角 = atan(w·max(\|v\|,1)·L/v_ref²)；MotionSta 停发时退回 AHRS |
 | `vcu_work_test.py` | 作业请求（issue #10）：DO_AUX_FUNCTION 300 升杆 / 收杆、AUTO 中 Work_On 不掉、航线末尾自动收杆、失权清零、注入 WorkFb=4、`VCU_WORK_EN=0` |
+| `vcu_drv_test.py` | 驱动器故障只上报不拦车（garlic.16）：HealthSta 注入 Drv1/2/3 后 `VCU_FAULT`=0、`VCU_DRVFLT`/`VCU_DRVCH` 有值且约 1 Hz、`VCU: drive fault 0x..`（NOTICE）、能解锁、GUIDED 行驶不切 HOLD；回归 Sys_Fault 仍禁止解锁 / 行驶中切 HOLD；`VCU_DRV_CHK=1` 时 `VCU_FAULT`=0x100+码但飞控不拦 |
 | `test.param` | SITL 参数：开脚本、`CAN_P1_DRIVER=1` + `CAN_D1_PROTOCOL=10`（脚本 CAN）、`SIM_CAN_TYPE1=1`（组播），速度 / 转弯半径按实车 |
 
 ## 模拟 VCU 的 WorkFb 序列（`vcu_work_test.py` 的 `WorkVcu`）
