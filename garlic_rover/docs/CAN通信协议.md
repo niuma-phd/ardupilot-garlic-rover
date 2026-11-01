@@ -39,8 +39,8 @@
 | 0x180D7D41 | Nav_HsAck | Nav → VCU | 事件应答 | 邀请后 2 s 内，每事务只答一次 |
 | 0x180B417D | VCU_NavSta | VCU → 总线 | 100 ms 广播 | Nav 侧监控超时 **定值 500 ms** |
 | 0x180A7D40 | FCU_SwapCmd | FCU → VCU | 事件 / 100 ms 重发 | **Nav 不消费** |
-| 0x1802407D | VCU_MotionSta | VCU → 总线 | 50 ms | 不参与授权；参与解锁检查和行驶中保护（`VCU_FB_TMO`，默认 200 ms，见 §3.4） |
-| 0x1806407D | VCU_HealthSta | VCU → 总线 | 500 ms | 不参与授权；Sys_Fault 参与解锁检查和行驶中保护（见 §3.4） |
+| 0x1802407D | VCU_MotionSta | VCU → 总线 | 50 ms | 协议外；不参与授权。`VCU_FB_CHK=1` 时参与解锁检查和行驶中保护（见 §3.4），默认只上报 |
+| 0x1806407D | VCU_HealthSta | VCU → 总线 | 500 ms | 协议外；不参与授权。`VCU_FB_CHK=1` 时 Sys_Fault 参与解锁检查和行驶中保护（见 §3.4），默认只上报 |
 
 ### 3.1 Nav_Cmd（0x180C7D41，Nav → VCU）
 
@@ -77,11 +77,15 @@
 
 WorkFb 自 VCU 公告激活起生效，激活前恒发 0（"反馈未激活"，不代表已确认运输位）。断链时 VCU 受控停车但提杆保持原位，WorkFb 如实上报。
 
-### 3.4 状态帧（不参与授权判定，参与解锁检查和行驶中保护）
+### 3.4 状态帧（协议外，不参与授权判定；由 `VCU_FB_CHK` 决定是否参与拦车）
 
-- **VCU_MotionSta**（0x1802407D，50 ms）：byte0–1 实际速度 ×0.01 m/s；byte2–3 实际转角 ×0.01°；byte5 bit0–3 Veh_State（0 初始化/1 就绪/2 运行/5 故障）、bit5 Failsafe。超过 `VCU_FB_TMO` 未收到或 Failsafe=1 → 禁止解锁 / 行驶中切 HOLD。
-- **VCU_HealthSta**（0x1806407D，500 ms）：byte0 SOC %；byte1–2 电压 ×0.1 V（原始 ≤1000）；byte3–5 Drv1/2/3_Fault（供应商故障码，**码表由甲方提供**）；byte6 Sys_Fault（0 无/1 急停/2 链路断/3 FCU 超时/4 电池低温/5 电池高温/6 电量低/7 提升超时）。HealthSta 800 ms 内新鲜且 Sys_Fault≠0 → 禁止解锁 / 行驶中切 HOLD。**驱动器故障 Drv1/2/3 只上报（§6 `VCU_DRVFLT`），不参与解锁检查和行驶中保护**，由 VCU 自己决定能不能走。
-- `VCU_FB_TMO=0`（台架调试）时以上两帧都不检查。
+- **VCU_MotionSta**（0x1802407D，50 ms）：byte0–1 实际速度 ×0.01 m/s；byte2–3 实际转角 ×0.01°；byte5 bit0–3 Veh_State（0 初始化/1 就绪/2 运行/5 故障）、bit5 Failsafe。`VCU_FB_CHK=1` 时：超过 `VCU_FB_TMO`（默认 200 ms）未收到或 Failsafe=1 → 禁止解锁 / 行驶中切 HOLD。
+- **VCU_HealthSta**（0x1806407D，500 ms）：byte0 SOC %；byte1–2 电压 ×0.1 V（原始 ≤1000）；byte3–5 Drv1/2/3_Fault（供应商故障码，**码表由甲方提供**）；byte6 Sys_Fault（0 无/1 急停/2 链路断/3 FCU 超时/4 电池低温/5 电池高温/6 电量低/7 提升超时）。`VCU_FB_CHK=1` 时：HealthSta 800 ms 内新鲜且 Sys_Fault≠0 → 禁止解锁 / 行驶中切 HOLD。驱动器故障 Drv1/2/3 两档都不参与解锁检查和行驶中保护。
+- **`VCU_FB_CHK`**（参数序号 12，garlic.17 起；garlic.16 叫 `VCU_DRV_CHK`，只管驱动器故障）：
+  - **0（默认）只上报，不拦车**，由 VCU 自己决定能不能走：以上各项都不禁止解锁、不切 HOLD，`VCU_OK` 不受影响；Sys_Fault 和驱动器故障不进 `VCU_FAULT`，改报 `VCU_SYSFLT` / `VCU_DRVFLT`，变化时发提示（§5）。
+  - **1 参与拦车**（garlic.15 做法）：反馈超时 / Failsafe / Sys_Fault 禁止解锁、行驶中切 HOLD；Sys_Fault 和驱动器故障（0x100+码）计入 `VCU_FAULT`，地面站见非 0 禁止开车。
+  - 协议内的 NavSta（授权、HsErr、WorkFb）不受此参数影响，始终参与。
+- `VCU_FB_CHK=1` 且 `VCU_FB_TMO=0`（台架调试）时以上两帧也不检查。
 
 ## 4. 握手与核心规则（协议 04 章）
 
@@ -97,11 +101,15 @@ WorkFb 自 VCU 公告激活起生效，激活前恒发 0（"反馈未激活"，�
 
 - 主循环 10 ms，保证 50 ms 发帧抖动 ≤10 ms；授权沿立即发第一帧。
 - 自检顺序：IMU 健康（不过→0x06）→ RTK 达 `VCU_RTK_REQ`（不过→0x05）→ 通过（0）。
-- 解锁前检查（按此顺序，任一不满足禁止解锁）：NavSta 新鲜、`OpSource=2`、WorkFb 不为 1（`lift moving`）/4（`lift fault`）、MotionSta 新鲜且无 Failsafe、HealthSta.Sys_Fault=0、RTK 达标。
+- 解锁前检查（按此顺序，任一不满足禁止解锁）：NavSta 新鲜、`OpSource=2`、WorkFb 不为 1（`lift moving`）/4（`lift fault`）、（仅 `VCU_FB_CHK=1`）MotionSta 新鲜且无 Failsafe、HealthSta.Sys_Fault=0、RTK 达标。
 - 行驶中失效（失权/WorkFb 变为 1 或 4/反馈异常/RTK 掉解超 `VCU_RTK_TMO`）→ 切 HOLD，提示 `VCU: <原因>, HOLD`（2 s 限频）；**只要授权仍在就持续发 v=0 的 Nav_Cmd 不断流**（2026-10-11 双方确认）。
 - 握手提示：HS→2 `VCU: wait RC start`；HS→3 `VCU: RC start OK`（遥控器已按 Ready）；HS→4/5 `VCU: handover failed`；HS→7 `VCU: RC link lost`。
 - WorkFb 提示：→1 `VCU: lift moving`；→4 `VCU: lift fault`；4→其他 `VCU: lift fault cleared`。
-- 驱动器故障提示（普通级别 NOTICE，不带 PreArm 前缀，不影响解锁）：变为非 0 或换码 `VCU: drive fault 0x%02X Drv<路号>`（如 `VCU: drive fault 0x01 Drv1`）；变回 0 `VCU: drive fault cleared`（INFO）。
+- 协议外状态提示（两档都发；普通级别 NOTICE，恢复为 INFO，不带 PreArm 前缀）：
+  - 驱动器故障：变为非 0 或换码 `VCU: drive fault 0x%02X Drv<路号>`（如 `VCU: drive fault 0x01 Drv1`）；变回 0 `VCU: drive fault cleared`。
+  - Sys_Fault：变为非 0 或换码 `VCU: sys fault 0x%02X`；变回 0 `VCU: sys fault cleared`。
+  - MotionSta Failsafe：0→1 `VCU: chassis failsafe`；1→0 `VCU: chassis failsafe cleared`。
+  - `VCU_FB_CHK=1` 时另有原来的解锁失败原因（`VCU: fault 0x0N` / `VCU: failsafe` / `VCU: feedback timeout`）和 `VCU: <原因>, HOLD`。
 - 作业（Work_On）：`VCU_WORK_EN=1` 且已授权时，跟随 RC 辅助功能 **SCRIPTING1（300）** 的电平请求，不再跟 AUTO 模式和车速绑定（否则 VCU 动杆时行驶锁 0 → 切 HOLD → Work_On 掉 0 → 收杆，反复升降）。
   - 地面站下发 `MAV_CMD_DO_AUX_FUNCTION`（param1=300，param2=2 升杆作业 / 0 收杆）；航线末尾也放一条 `DO_AUX_FUNCTION 300 低`，作为收杆兜底（4G 断开时也能收杆）。
   - AB 线单条：AUTO 到对准点停 → 请求 2，等 WorkFb=3（=4 为故障）→ AUTO 起点到终点 → 航线末尾请求 0，等 WorkFb=0。
@@ -112,18 +120,18 @@ WorkFb 自 VCU 公告激活起生效，激活前恒发 0（"反馈未激活"，�
 
 ## 6. 遥测与地面站上报
 
-**授权判定只认 NavSta**；MotionSta / HealthSta 除板载日志和地面站遥测外，还参与解锁检查和行驶中保护（§3.4、§5）。5 Hz 上报：
+**授权判定只认 NavSta**；MotionSta / HealthSta 除板载日志和地面站遥测外，`VCU_FB_CHK=1` 时还参与解锁检查和行驶中保护（§3.4、§5）。5 Hz 上报：
 
 | 名称 | 含义 |
 |---|---|
 | `VCU_MODE` | 0 NavSta 无效；1 遥控/切换中；2 无人 |
-| `VCU_FAULT` | Sys_Fault 1~7 直报；HsErr 报 0x10+码（优先级 Sys_Fault > HsErr）。**garlic.16 起驱动器故障默认不进 VCU_FAULT**，改报 `VCU_DRVFLT`；`VCU_DRV_CHK=1` 时仍按 garlic.15 报 0x100+码（优先级最低） |
+| `VCU_FAULT` | HsErr 报 0x10+码。`VCU_FB_CHK=1` 时另按 garlic.15：Sys_Fault 1~7 直报（优先于 HsErr），驱动器故障报 0x100+码（优先级最低）；默认 0 时这两项改报 `VCU_SYSFLT` / `VCU_DRVFLT` |
 | `VCU_BATV` / `VCU_SOC` | HealthSta 电压 / 电量（仅在 HealthSta 1500 ms 内新鲜时发送，否则不发） |
-| `VCU_OK` | 综合就绪位（授权 + WorkFb 非 1/4 + 反馈正常 + RTK 保持） |
+| `VCU_OK` | 综合就绪位（授权 + WorkFb 非 1/4 + 反馈正常（仅 `VCU_FB_CHK=1`）+ RTK 保持） |
 
 `VCU_WORKFB`（NavSta.WorkFb 0～4）不在 5 Hz 里：变化时立即发一次，之后 1 Hz（NavSta 无效时不发）。
 
-`VCU_DRVFLT` / `VCU_DRVCH`（garlic.16 起）：驱动器故障码 = Drv1→Drv2→Drv3 中第一个非 0 的码（0 无故障），路号 1～3（0 无故障）。变化时立即发一次，之后 1 Hz；HealthSta 1500 ms 内不新鲜时不发。码表由甲方提供。只上报不拦车。
+`VCU_SYSFLT`（garlic.17 起）：HealthSta Sys_Fault 原值 0～7。`VCU_DRVFLT` / `VCU_DRVCH`（garlic.16 起）：驱动器故障码 = Drv1→Drv2→Drv3 中第一个非 0 的码（0 无故障），路号 1～3（0 无故障），码表由甲方提供。三个一起发：任一变化时立即发一次，之后 1 Hz；HealthSta 1500 ms 内不新鲜时不发。两档都发。
 
 `VCU_WREQ`（作业请求 0/1，即 SCRIPTING1 是否为高）：变化时立即发；`VCU_WORK_EN=1` 时随 `VCU_WORKFB` 1 Hz 补发。
 
@@ -133,19 +141,19 @@ WorkFb 自 VCU 公告激活起生效，激活前恒发 0（"反馈未激活"，�
 
 调试量（`VCU_DBG_HZ` > 0 时上报）：`VCU_CMD_V/W/D`、`VCU_VREF`、`VCU_V/W`。
 
-### 6.1 故障码（`VCU_FAULT` / `VCU_DRVFLT`）
+### 6.1 故障码（`VCU_FAULT` / `VCU_SYSFLT` / `VCU_DRVFLT`）
 
-| 遥测 | 取值 | 来源 | 拦不拦车 |
-|---|---|---|---|
-| `VCU_FAULT` | 0 | 无故障 | — |
-| `VCU_FAULT` | 0x01～0x07 | HealthSta.Sys_Fault 原值（1 急停 / 2 链路断 / 3 FCU 超时 / 4 电池低温 / 5 电池高温 / 6 电量低 / 7 提升超时） | 拦：禁止解锁（`PreArm: VCU: fault 0x0N`）、行驶中切 HOLD |
-| `VCU_FAULT` | 0x11～0x16 | 0x10 + NavSta.HsErr（1 Nav 无响应 / 2 自检故障 / 3 停稳超时 / 4 Nav_Cmd 断链 / 5 遥控链断 / 6 未授权帧溢出） | 飞控不单独拦（VCU 会同时收权，按失权处理） |
-| `VCU_DRVFLT` | 驱动器故障码（`VCU_DRVCH` 1～3 为哪一路） | HealthSta Drv1/2/3_Fault，取第一个非 0 | **飞控不拦**，只上报 + 提示 `VCU: drive fault 0x..`，由 VCU 决定能不能走 |
-| `VCU_FAULT`（仅 `VCU_DRV_CHK=1`） | 0x100 + 驱动器故障码 | 同上 | 飞控不拦；地面站见 `VCU_FAULT`≠0 禁止开车 |
+| 遥测 | 取值 | 来源 | `VCU_FB_CHK=0`（默认） | `VCU_FB_CHK=1` |
+|---|---|---|---|---|
+| `VCU_FAULT` | 0x11～0x16 | 0x10 + NavSta.HsErr（协议内：1 Nav 无响应 / 2 自检故障 / 3 停稳超时 / 4 Nav_Cmd 断链 / 5 遥控链断 / 6 未授权帧溢出） | 报；飞控不单独拦（VCU 同时收权，按失权处理），地面站拦 | 同左 |
+| `VCU_FAULT` | 0x01～0x07 | HealthSta.Sys_Fault 原值（1 急停 / 2 链路断 / 3 FCU 超时 / 4 电池低温 / 5 电池高温 / 6 电量低 / 7 提升超时） | **不报** | 报，优先于 HsErr；飞控禁止解锁（`VCU: fault 0x0N`）、行驶中切 HOLD；地面站拦 |
+| `VCU_FAULT` | 0x100 + 码 | 驱动器故障 Drv1/2/3，取第一个非 0 | **不报** | 报，优先级最低；飞控不拦，地面站拦 |
+| `VCU_SYSFLT` | 0～7 | Sys_Fault 原值 | 报 + 提示 `VCU: sys fault 0x..`；不拦 | 同样上报 |
+| `VCU_DRVFLT` / `VCU_DRVCH` | 码 / 路号 1～3 | 驱动器故障 | 报 + 提示 `VCU: drive fault 0x..`；不拦 | 同样上报 |
 
-优先级 Sys_Fault > HsErr。garlic.15 及以前驱动器故障报为 `VCU_FAULT`=0x100+码，地面站见 `VCU_FAULT`≠0 即禁止开始作业 / 开到这里，garlic.16 起默认移出。
+garlic.15 及以前 Sys_Fault 和驱动器故障都进 `VCU_FAULT`，地面站见 `VCU_FAULT`≠0 即禁止开始作业 / 开到这里 / AB 线开线。garlic.16 移出驱动器故障，garlic.17 默认把协议外的 MotionSta / HealthSta 全部改为只上报。
 
-`VCU_DRV_CHK`（参数序号 12，garlic.16 新增）：0（默认）只上报；1 同时计入 `VCU_FAULT`。参数表由 11 扩到 12，**换上 garlic.16 脚本后要重启飞控**，只重启脚本会报 `could not add param table`（表大小上电后固定）；存量参数保留，回退旧脚本也不受影响。
+`VCU_FB_CHK` 是参数序号 12（garlic.16 叫 `VCU_DRV_CHK`，存的值沿用）。参数表从 11 扩到 12，**换上 garlic.16 及以后的脚本要重启飞控**，只重启脚本会报 `could not add param table`（表大小上电后固定）。原有参数保留，回退旧脚本也不受影响。
 
 ## 7. 联调检查表
 
