@@ -145,6 +145,11 @@ void Rover::init_ardupilot()
 
     rover.g2.sailboat.init();
 
+    // garlic: the VCU sets the actual speed itself (lift up ~1.4 m/s, down ~0.55 m/s) and often drives
+    // faster than WP_SPEED. Let the scurve target catch up with a faster vehicle (as sailboats do)
+    // instead of pulling the vehicle back, which made it turn around at the start of a route
+    g2.wp_nav.enable_overspeed(true);
+
     // boat should loiter after completing a mission to avoid drifting off
     if (is_boat()) {
         rover.g2.mis_done_behave.set_default(uint8_t(ModeAuto::DoneBehaviour::LOITER));

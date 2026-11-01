@@ -18,7 +18,8 @@
 
 ## 与官方 Rover-4.7.2 的差异
 
-- 增加 Lua 接口 `AR_AttitudeControl:get_desired_speed()` / `get_desired_turn_rate()`，只加接口，不改导航和控制逻辑。
+- 增加 Lua 接口 `AR_AttitudeControl:get_desired_speed()` / `get_desired_turn_rate()`。
+- garlic.18 起航点导航打开"超速追车"（`AR_WPNav::enable_overspeed`，官方只给帆船用）：VCU 自己定车速、常比 WP_SPEED 快，目标点跟着车走，不再把车往回拉（之前航线起步会掉头绕圈）。
 - 从 ArduPilot master 移植 X-MAV AP-H743v3 的板级定义、板号（1220）和 Bootloader。
 - 修复 OSD 空指针：`OSD_TYPE`=0 而 `OSD_TYPE2` 不为 0 时，官方 4.7.1/4.7.2 的 OSD 线程访问空指针，飞控启动即卡死（本板默认 `OSD_TYPE2`=5）。garlic.4 起改用官方修复 [ArduPilot#34497](https://github.com/ArduPilot/ardupilot/pull/34497)（截至本版本尚未合并进官方），同时修正只开第二路 OSD 时的解锁前误报。
 - 车端 CAN 桥接脚本、基础参数和文档放在 `garlic_rover/` 目录。
