@@ -12,7 +12,7 @@
 1. 刷 `.apj`。板子上还没有 ArduPilot 时，先用 DFU 刷 `X-MAV-AP-H743v3_bl.bin`。
 2. 加速度计校准。
 3. 加载 `garlic_rover.param` 两遍（每遍都写入并重启）。
-4. 把 `vcu_can.lua` 放到 SD 卡的 `APM/scripts/`，重启。
+4. 把 `vcu_can.lua` 放到 SD 卡的 `APM/scripts/`，**重启飞控**（新版脚本可能新增参数，只重启脚本会报 `could not add param table`）。
 5. 消息栏出现 `VCU: CAN bridge loaded` 即为正常。
 6. 飞控 CAN2 接 VCU（只接 CAN_H、CAN_L、GND），RTK GPS 接 GPS 口（SERIAL3）。
 

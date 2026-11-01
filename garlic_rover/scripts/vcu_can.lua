@@ -17,8 +17,9 @@
    监听帧 (不参与 VCU 授权判定, 授权只看 NavSta; 但用于解锁检查和行驶中保护):
    VCU_MotionSta 0x1802407D  50ms
    VCU_HealthSta 0x1806407D  500ms
-     反馈超时 / Failsafe / HealthSta 故障码非 0 时禁止解锁, 行驶中切 HOLD 并持续发 v=0;
-     VCU_FB_TMO=0 时不检查
+     反馈超时 / Failsafe / HealthSta Sys_Fault 非 0 时禁止解锁, 行驶中切 HOLD 并持续发 v=0;
+     VCU_FB_TMO=0 时不检查. 驱动器故障 Drv1/2/3_Fault 只上报 (VCU_DRVFLT), 不拦车, 由 VCU 自己决定能不能走;
+     VCU_DRV_CHK=1 时另外计入 VCU_FAULT=0x100+码 (地面站据此禁止开车, 飞控仍不拦)
 
  核心规则 (协议 04 章):
    1. 上电静默: 只听 NavSta, 不主动发任何帧
@@ -61,7 +62,7 @@ local WORK_LIFT_EXPECT_MS = 30000  -- Work_On 变化后多久内的升/降杆算
 local SCRIPT_VERSION = "dev"
 
 -- MAV_SEVERITY
-local MAV_EMERG, MAV_CRIT, MAV_WARN, MAV_INFO = 0, 2, 4, 6
+local MAV_EMERG, MAV_CRIT, MAV_WARN, MAV_NOTICE, MAV_INFO = 0, 2, 4, 5, 6
 
 -- Rover 模式号
 local MODE_HOLD = 4
@@ -88,10 +89,11 @@ local ST_OK, ST_CAN, ST_GNSS, ST_IMU = 0x00, 0x02, 0x05, 0x06
 local CAPS = 0x03             -- bit0 速度/方向 + bit1 作业电机(仅启停)
 
 ---------------------------------------------------------------------------
--- 参数表 VCU_*  (序号 1~8 与旧版保持一致, 存量参数自动继承; 9~11 为新增)
+-- 参数表 VCU_*  (序号 1~8 与旧版保持一致, 存量参数自动继承; 9~12 为新增)
+-- 表大小上电后固定: 加了参数的脚本换上后要重启飞控, 只重启脚本会报 could not add param table
 ---------------------------------------------------------------------------
 local PARAM_TABLE_KEY = 71
-assert(param:add_table(PARAM_TABLE_KEY, "VCU_", 11), "VCU: could not add param table")
+assert(param:add_table(PARAM_TABLE_KEY, "VCU_", 12), "VCU: could not add param table")
 local function bind_add_param(name, idx, default)
   assert(param:add_param(PARAM_TABLE_KEY, idx, name, default), "VCU: could not add param " .. name)
   return Parameter("VCU_" .. name)
@@ -118,6 +120,8 @@ local VCU_W_BASE  = bind_add_param("W_BASE", 9, 1.2)
 local VCU_WORK_EN = bind_add_param("WORK_EN", 10, 0)
 --[[ @Param: VCU_VREF_MIN  @DisplayName: 转角换算用实际车速的下限(m/s), 起步时实际车速接近 0, 防止转角乱跳 --]]
 local VCU_VREF_MIN = bind_add_param("VREF_MIN", 11, 0.3)
+--[[ @Param: VCU_DRV_CHK  @DisplayName: 驱动器故障是否计入 VCU_FAULT (地面站见 VCU_FAULT 非 0 即禁止开车). 两档飞控都不拦, 都发 VCU_DRVFLT  @Values: 0:只上报(VCU_DRVFLT),1:同时计入VCU_FAULT=0x100+码(garlic.15 做法) --]]
+local VCU_DRV_CHK = bind_add_param("DRV_CHK", 12, 0)
 
 ---------------------------------------------------------------------------
 -- CAN
@@ -180,7 +184,8 @@ end
 -- NavSta: 授权唯一真相
 local navsta = { ms = 0, op = 0, hs = 0, seq = 0, err = 0, wfb = 0 }
 -- MotionSta / HealthSta: 不参与 VCU 授权判定 (授权只看 NavSta), 但用于解锁检查和行驶中保护:
---   反馈超时 / Failsafe / HealthSta 故障码非 0 时禁止解锁, 行驶中切 HOLD 并持续发 v=0; VCU_FB_TMO=0 时不检查
+--   反馈超时 / Failsafe / HealthSta Sys_Fault 非 0 时禁止解锁, 行驶中切 HOLD 并持续发 v=0; VCU_FB_TMO=0 时不检查
+--   驱动器故障 Drv1/2/3 只上报, 不参与解锁检查和行驶中保护
 local motion = { ms = 0, v = 0, steer_deg = 0, veh = -1, failsafe = false }
 local health = { ms = 0, soc = 0, bat_v = 0, drv1 = 0, drv2 = 0, drv3 = 0, sys = 0 }
 
@@ -233,6 +238,14 @@ local function feedback_ok(now)
     return false, string.format("fault 0x%02X", health.sys)
   end
   return true, nil
+end
+
+-- 驱动器故障: 第一个非 0 的 Drv1/2/3_Fault 及其路号 (1~3); 无故障返回 0, 0. 只上报, 不拦车
+local function drive_fault()
+  if health.drv1 > 0 then return health.drv1, 1 end
+  if health.drv2 > 0 then return health.drv2, 2 end
+  if health.drv3 > 0 then return health.drv3, 3 end
+  return 0, 0
 end
 
 -- AHRS 前向速度: EKF 地速投到航向上 (同 AR_AttitudeControl::get_forward_speed)
@@ -330,6 +343,8 @@ local last_warn_ms = 0
 local last_wfb_ms = 0
 local prev_hs = 0
 local prev_wfb = 0
+local last_drv_ms = 0
+local prev_drv, prev_drv_ch = 0, 0
 local prev_work_req = false
 local prev_work_on = false
 local last_work_change_ms = -100000   -- Work_On 上次变化时刻 (升/降杆在此后 WORK_LIFT_EXPECT_MS 内属预期)
@@ -386,6 +401,26 @@ local function update()
       gcs:send_named_float("VCU_WORKFB", navsta.wfb)
       -- 作业请求随 WorkFb 1 Hz 补发 (变化时另有立即发送), 地面站重连后也能核对
       if VCU_WORK_EN:get() > 0 then gcs:send_named_float("VCU_WREQ", work_request() and 1 or 0) end
+    end
+  end
+
+  -- 驱动器故障: 只上报, 不拦车. 变化时提示一次并立即发 VCU_DRVFLT (码) / VCU_DRVCH (路号 1~3), 之后 1 Hz;
+  -- HealthSta 不新鲜 (1500 ms) 时不发
+  if health.ms > 0 and now - health.ms <= 1500 then
+    local drv, drv_ch = drive_fault()
+    local drv_changed = drv ~= prev_drv or drv_ch ~= prev_drv_ch
+    if drv_changed then
+      if drv > 0 then
+        gcs:send_text(MAV_NOTICE, string.format("VCU: drive fault 0x%02X Drv%d", drv, drv_ch))
+      else
+        gcs:send_text(MAV_INFO, "VCU: drive fault cleared")
+      end
+      prev_drv, prev_drv_ch = drv, drv_ch
+    end
+    if drv_changed or now - last_drv_ms >= 1000 then
+      last_drv_ms = now
+      gcs:send_named_float("VCU_DRVFLT", drv)
+      gcs:send_named_float("VCU_DRVCH", drv_ch)
     end
   end
 
@@ -488,7 +523,10 @@ local function update()
                  navsta_valid and navsta.op or 0, navsta_valid and navsta.hs or 0,
                  navsta.err, clamp(motion.veh, 0, 255), motion.failsafe and 1 or 0,
                  ok and 1 or 0, fix, navsta.wfb, v_ref, ahrs_v)
-    logger:write("VCUW", "WR,WO", "BB", work_req and 1 or 0, work_on and 1 or 0)
+    -- SF = HealthSta Sys_Fault, DF/DC = 驱动器故障码及路号 (HealthSta 最近一帧, 不看新鲜度)
+    local drv, drv_ch = drive_fault()
+    logger:write("VCUW", "WR,WO,SF,DF,DC", "BBBBB", work_req and 1 or 0, work_on and 1 or 0,
+                 health.sys, drv, drv_ch)
   end
 
   -- 5Hz 上报地面站 (客户地面站只用这 5 个值, 4G 按流量计费)
@@ -497,15 +535,16 @@ local function update()
     last_gcs_ms = now
     -- VCU_MODE: 0 未知(NavSta 无效), 1 遥控/切换中, 2 无人
     gcs:send_named_float("VCU_MODE", (not navsta_valid) and 0 or (navsta.op == OP_NAV and 2 or 1))
-    -- VCU_FAULT: Sys_Fault 1~7 直接报; HsErr 报 0x10+码; 驱动器故障报 0x100+码
+    -- VCU_FAULT: Sys_Fault 1~7 直接报; HsErr 报 0x10+码. 驱动器故障默认不进 VCU_FAULT (地面站见非 0 即拦车),
+    -- 单独报 VCU_DRVFLT (garlic.16 起); VCU_DRV_CHK=1 时按 garlic.15 报 0x100+码
     local fault_code = 0
     local health_fresh = health.ms > 0 and now - health.ms <= 1500
     if health_fresh and health.sys > 0 then
       fault_code = health.sys
     elseif navsta_valid and navsta.err > 0 then
       fault_code = 0x10 + navsta.err
-    elseif health_fresh then
-      local drv = health.drv1 > 0 and health.drv1 or (health.drv2 > 0 and health.drv2 or health.drv3)
+    elseif health_fresh and VCU_DRV_CHK:get() > 0 then
+      local drv = drive_fault()
       if drv > 0 then fault_code = 0x100 + drv end
     end
     gcs:send_named_float("VCU_FAULT", fault_code)
