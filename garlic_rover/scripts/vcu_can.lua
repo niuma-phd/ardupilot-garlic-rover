@@ -38,9 +38,15 @@
    农机 VCU 自己定车速 (运输约 5km/h, 作业约 2km/h), 只认走/停, 实际车速常与指令不同.
    Rover 4.7.2 航点导航给的 w = a_lat / max(|v_des|, 1.0) (AR_PosControl, v_des 为期望车速),
    这里先还原 a_lat, 再按实际车速换算转角.
-   v_ref: MotionSta 新鲜时用 VCU 回报车速, 否则用 AHRS 地速投到航向; 下限 VCU_VREF_MIN
+   v_ref: VCU_VREF_SRC=1 (默认) 用 AHRS 地速投到航向 (RTK); =0 时 MotionSta 新鲜就用 VCU 回报车速
+     (实车 VCU 回报车速封顶约 0.85 m/s, 实际 1.4~1.7 m/s, 用它换算转角会大 3~4 倍); 下限 VCU_VREF_MIN
    Target_Steer 正值 = 前轮左转 (v1.1 书面约定), 与 w 逆时针为正天然一致
    delta 限幅 min(45deg, deg(atan(L/TURN_RADIUS))), 指令 |v|<0.05m/s 时保持上次转角
+
+ 前轮转向慢 (实车约 4.5 deg/s, 起步约 1 s 即到 1 m/s 以上, 2026-11-01 bin) 的适配, 只看转角不看车速:
+   起步回正 VCU_STR_TOL: 车静止要起步时先把前轮回正, 实际转角 (MotionSta) 偏离正中超过此值就发 v=0 等前轮
+   停车回正 VCU_STR_PARK: 不在行驶状态时转角指令回 0, 下次起步不带着上次的转角
+   零位补偿 VCU_STR_OFS: 叠加到下发的转角上 (bin 反算 VCU 报 0 时前轮实际偏左约 1.5 度, 需实车标定)
 
  所需参数(与 garlic_rover/params/garlic_rover.param 一致):
    SCR_ENABLE=1  CAN_P2_DRIVER=2  CAN_D2_PROTOCOL=10  CAN_P2_BITRATE=500000
@@ -95,7 +101,7 @@ local CAPS = 0x03             -- bit0 速度/方向 + bit1 作业电机(仅启�
 -- 表大小上电后固定: 加了参数的脚本换上后要重启飞控, 只重启脚本会报 could not add param table
 ---------------------------------------------------------------------------
 local PARAM_TABLE_KEY = 71
-assert(param:add_table(PARAM_TABLE_KEY, "VCU_", 12), "VCU: could not add param table")
+assert(param:add_table(PARAM_TABLE_KEY, "VCU_", 16), "VCU: could not add param table")
 local function bind_add_param(name, idx, default)
   assert(param:add_param(PARAM_TABLE_KEY, idx, name, default), "VCU: could not add param " .. name)
   return Parameter("VCU_" .. name)
@@ -124,6 +130,14 @@ local VCU_WORK_EN = bind_add_param("WORK_EN", 10, 0)
 local VCU_VREF_MIN = bind_add_param("VREF_MIN", 11, 0.3)
 --[[ @Param: VCU_FB_CHK  @DisplayName: 协议外状态帧 (MotionSta/HealthSta) 是否参与拦车: 0 只上报; 1 反馈超时/Failsafe/Sys_Fault 禁止解锁、行驶中切 HOLD, Sys_Fault 和驱动器故障计入 VCU_FAULT (地面站据此禁止开车)  @Values: 0:只上报,1:参与拦车(garlic.15 做法) --]]
 local VCU_FB_CHK = bind_add_param("FB_CHK", 12, 0)
+--[[ @Param: VCU_VREF_SRC  @DisplayName: 转角换算用的实际车速来源: 0 MotionSta 回报车速 (新鲜时), 1 AHRS 前向速度 (RTK). 实车 VCU 回报车速封顶约 0.85 m/s, 用 1  @Values: 0:VCU回报,1:AHRS --]]
+local VCU_VREF_SRC = bind_add_param("VREF_SRC", 13, 1)
+--[[ @Param: VCU_STR_TOL  @DisplayName: 起步回正(度): 车静止要起步时先把前轮回正, 实际转角(MotionSta)偏离正中超过此值就不给车速; 0=不等  @Units: deg --]]
+local VCU_STR_TOL = bind_add_param("STR_TOL", 14, 5)
+--[[ @Param: VCU_STR_PARK  @DisplayName: 停车回正: 1 不在行驶状态(未解锁/非自动模式)时转角指令回 0; 0 保持上次转角  @Values: 0:保持,1:回正 --]]
+local VCU_STR_PARK = bind_add_param("STR_PARK", 15, 1)
+--[[ @Param: VCU_STR_OFS  @DisplayName: 转角零位补偿(度, 左正): 叠加到下发的转角指令上, 补偿前轮零位偏差  @Units: deg --]]
+local VCU_STR_OFS = bind_add_param("STR_OFS", 16, 0)
 
 ---------------------------------------------------------------------------
 -- CAN
@@ -259,7 +273,7 @@ end
 
 -- 转角换算用的实际车速: MotionSta 新鲜时用 VCU 回报车速, 否则用 AHRS 前向速度
 local function actual_speed(now, ahrs_v)
-  if motion.ms > 0 and now - motion.ms <= MOTION_FRESH_MS then return motion.v end
+  if VCU_VREF_SRC:get() <= 0 and motion.ms > 0 and now - motion.ms <= MOTION_FRESH_MS then return motion.v end
   return ahrs_v
 end
 
@@ -498,12 +512,26 @@ local function update()
   local ahrs_v = ahrs_fwd_speed()
   local v_ref = math.max(math.abs(actual_speed(now, ahrs_v)), VCU_VREF_MIN:get(), 0.05)
   local steer_deg = last_steer_deg
+  if not driving and VCU_STR_PARK:get() > 0 then
+    steer_deg = 0
+    last_steer_deg = 0
+  end
   if math.abs(v) >= 0.05 then
     -- 还原导航的横向加速度 a_lat = w * max(|v_des|, 1.0) (带 v_des 符号), 再 tan(delta) = a_lat*L/v_ref^2
     local s = math.max(math.abs(v_des), ATC_STEER_SPEED_MIN)
     if v_des < 0 then s = -s end
     steer_deg = clamp(math.deg(math.atan(w * s * wheelbase / (v_ref * v_ref))), -steer_max, steer_max)
     last_steer_deg = steer_deg
+  end
+  -- 起步回正: 车静止时先把前轮回到正中, 偏差在 VCU_STR_TOL 内才给车速 (VCU 转向约 4.5 deg/s, 起步约 1 s 即到
+  -- 1 m/s 以上, 前轮不正就会带着转角冲出去). 静止时按 VREF_MIN 换算的转角没有意义, 不去对准它
+  local tol = VCU_STR_TOL:get()
+  if tol > 0 and math.abs(v) > 0.01 and math.abs(ahrs_v) < 0.1 and motion.ms > 0 and now - motion.ms <= MOTION_FRESH_MS then
+    steer_deg = 0
+    last_steer_deg = 0
+    if math.abs(VCU_STR_OFS:get() - motion.steer_deg) > tol then
+      v = 0
+    end
   end
 
   -- 作业 (Work_On): 由地面站/航线经 SCRIPTING1 请求, 电平保持, 不跟模式和车速走 (v1.1: 0->1 升杆进入作业,
@@ -528,7 +556,7 @@ local function update()
   if authorized and not was_authorized then last_tx_ms = 0 end
   if authorized and now - last_tx_ms >= TX_PERIOD_MS then
     last_tx_ms = now
-    send_nav_cmd(v, steer_deg, work_on, navsta.seq)
+    send_nav_cmd(v, steer_deg + VCU_STR_OFS:get(), work_on, navsta.seq)
   end
   was_authorized = authorized
 

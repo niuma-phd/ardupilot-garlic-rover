@@ -15,9 +15,9 @@ FRAME_CLASS,1
 WP_PIVOT_ANGLE,0
 # 上电默认 HOLD(4), 不用默认的 MANUAL
 INITIAL_MODE,4
-# 最小转弯半径(m): 等效轴距 1.2 m、前辊最大摆角 30 度的理论值 1.2/tan30 = 2.08 m;
-#   vcu_can.lua 按 atan(VCU_W_BASE/TURN_RADIUS) 限前辊转角, 2.1 对应约 29.7 度. 实测最小转弯半径后替换
-TURN_RADIUS,2.1
+# 最小转弯半径(m): 等效轴距 1.2 m、前辊实测最大转角 13 度 (2026-11-02): 1.2/tan13 = 5.2 m;
+#   vcu_can.lua 按 atan(VCU_W_BASE/TURN_RADIUS) 限前辊转角, 飞控按它规划转弯
+TURN_RADIUS,5.2
 
 # ---------- 脚本 + CAN (CAN1 保留给 DroneCAN, CAN2 接 VCU) ----------
 # [重启]
@@ -47,6 +47,8 @@ SPEED_MAX,1.38
 RTL_SPEED,0
 # 任务结束后: 0=HOLD
 MIS_DONE_BEHAVE,0
+# GUIDED (开到这里) 用 S 曲线航点推进 (bit6), 与 AUTO 一样能跟上比 WP_SPEED 快的车 (固件已开超速追车)
+GUID_OPTIONS,64
 # 航点存 SD 卡(KB), 约 15 字节/航点, 64KB 约 4000 点  [重启]
 BRD_SD_MISSION,64
 
@@ -179,5 +181,14 @@ VCU_DBG_HZ,0
 VCU_RTK_REQ,2
 # RTK 不满足要求持续多久(ms)后停车
 VCU_RTK_TMO,3000
+# 转角换算用的实际车速: 1=AHRS (RTK), 0=VCU 回报车速 (实车封顶约 0.85 m/s, 不可用)
+VCU_VREF_SRC,1
+# 起步回正(度): 车静止要起步时先把前轮回正到此范围内才给车速 (前轮约 4.5 度/秒), 0=不等
+VCU_STR_TOL,5
+# 停车回正: 1=不在行驶状态时转角指令回 0
+VCU_STR_PARK,1
+# 转角零位补偿(度, 左正): 实车标定. bin 反算 VCU 报 0 时前轮实际偏左约 1.5 度, 估计值 -1.4;
+#   直线行驶稳定偏在线一侧时调整 (偏右 -> 往正调, 偏左 -> 往负调)
+VCU_STR_OFS,0
 # 解锁前也记日志: 0=关 (默认), 台架调试时可能临时设过 1
 LOG_DISARMED,0

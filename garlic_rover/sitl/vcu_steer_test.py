@@ -52,7 +52,9 @@ def main():
     vcu = ScaledVcu()
     mav = Mav("tcp:127.0.0.1:5770")
     time.sleep(3)
-    for p, v in (("VCU_RTK_REQ", 0), ("VCU_DBG_HZ", 10), ("ARMING_CHECK", 0)):
+    # 本测试验证按 MotionSta 车速换算 (VCU_VREF_SRC=0); 默认 1 时 v_ref 恒为 AHRS 前向速度, 同 8c.
+    # 起步回正 (VCU_STR_TOL) 会在静止时把转角压成 0, 关掉以便比对换算公式
+    for p, v in (("VCU_RTK_REQ", 0), ("VCU_DBG_HZ", 10), ("ARMING_CHECK", 0), ("VCU_VREF_SRC", 0), ("VCU_STR_TOL", 0)):
         mav.set_param(p, v)
     vcu.sta = [1, 1, 7, 0, 0, 0, 0, 0]
     time.sleep(0.6)
