@@ -34,3 +34,19 @@ bash garlic_rover/sitl/run.sh "" vcu_work_test.py   # 只跑一套
 ## 限制
 
 SITL 里车按 ArduPilot 自己的舵机输出在动，**不听 Nav_Cmd**。所以能验证脚本的协议逻辑、状态机和换算公式，验证不了实际车辆行为（如直线是否蛇形），这些要实车测。
+
+## 车辆模型（实车 VCU 特性，2026-11-01）
+
+上面几套测试里车按 ArduPilot 舵机输出动，看不到实车行为。`garlic_plant.py` 用 SITL 的 JSON 外部物理接口提供车辆运动，同时在组播 CAN 上扮演 VCU，车只听 `vcu_can.lua` 的 Nav_Cmd，按实车 bin 测得的特性运动：前轮按 `STEER_RATE`（4.5°/s）追指令、限幅 `STEER_MAX`；有车速指令就跑 `V_RUN`（不随指令大小变，`SPEED_MODE=follow` 时跟随指令）；加速 2.5、减速 4.5 m/s²；有效转角 = 1.1 × 回报 + 1.5°；回报车速封顶 0.85 m/s；解锁前前轮停在 `STEER0`。
+
+| 文件 | 内容 |
+|---|---|
+| `garlic_plant.py` | 车辆模型 + 模拟 VCU，参数 `key=value`（见文件头） |
+| `run_plant.sh` | 起一次：`run_plant.sh <vcu_can.lua> "<模型参数>" <场景> [飞控参数 k=v ...]`，场景 `ab` / `goto` / `abfull` |
+| `plant_test.py` | `ab`：AUTO 跑车头方向的直线；`goto`：开到这里。用模型真实位置评估横偏 |
+| `plant_ab.py` | `abfull`：按地面站 AB 作业流程（对准任务 → HOLD → 作业任务）；`SKIP_ALIGN=1` 时手动对准后直接作业 |
+| `plant_batch.sh` | 批量：用例文件每行五段，用竖线分隔：名称、lua、模型参数、场景、飞控参数 |
+
+例：`bash run_plant.sh ../scripts/vcu_can.lua "STEER_MAX=13 STEER0=-13" ab TURN_RADIUS=5.2`
+
+模型参数 `OS=1` 会设环境变量 `GARLIC_OVERSPEED`，只对 `~/ardupilot` 里加了这个测试开关的 SITL 有效；用本仓库编出的 SITL 时超速追车本来就开着（`Rover/system.cpp`）。模型没有包含实车"前轮朝指令反方向走好几秒"的现象。
