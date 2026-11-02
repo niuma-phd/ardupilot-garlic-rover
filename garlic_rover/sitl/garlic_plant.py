@@ -3,7 +3,8 @@
 
 SITL 里车不再按 ArduPilot 舵机输出动, 而是像实车一样只听 vcu_can.lua 发的 Nav_Cmd
 (目标车速 / 前轮转角), 按实车日志 (2026-11-01 bin) 测得的 VCU 特性运动:
-  - 前轮转角按 STEER_RATE (4.5 deg/s) 限速追指令, 限幅 STEER_MAX (25 deg)
+  - 前轮转角按 STEER_RATE (4.5 deg/s) 限速追指令, 限幅 STEER_MAX (25 deg); 左右不同时用 STEER_MAX_L / STEER_MAX_R
+  - LATCH=1: 锁定目标式转向 (实车 VCU, 甲方 11-02 确认): 转到锁定目标 (LATCH_TOL 内) 或机械极限后才接受最新指令
   - 车速: SPEED_MODE=run 时有指令 (>=0.05) 就跑 V_RUN (1.7 m/s), 不随指令大小变 (实车如此);
           SPEED_MODE=follow 时跟随指令车速. 加速 ACCEL (2.5), 减速 DECEL (4.5) m/s^2
   - 有效转角 = STEER_K (1.1) * 回报转角 + STEER_OFS (1.5 deg, 左正), 自行车模型轴距 WBASE (1.2 m)
@@ -14,7 +15,7 @@ NavSta 始终为 无人授权 (Op=2, HS=3, Seq=7), WorkFb=0.
 """
 import json, math, os, socket, struct, sys, threading, time
 
-CFG = dict(STEER_RATE=4.5, STEER_MAX=25.0, SPEED_MODE="run", V_RUN=1.7, ACCEL=2.5, DECEL=4.5,
+CFG = dict(STEER_RATE=4.5, STEER_MAX=25.0, STEER_MAX_L=None, STEER_MAX_R=None, LATCH=0.0, LATCH_TOL=0.5, SPEED_MODE="run", V_RUN=1.7, ACCEL=2.5, DECEL=4.5,
            STEER_K=1.1, STEER_OFS=1.5, WBASE=1.2, AV_CAP=0.85, STEER0=0.0, YAW0=None, LOG="", PORT=9012)
 for a in sys.argv[1:]:
     k, v = a.split("=", 1)
@@ -96,7 +97,17 @@ def main():
         # VCU 执行: 转角限速追指令. 测试脚本解锁 (建 /tmp/plant_go) 之前前轮停在 STEER0 (模拟手动开到起点后前轮留下的转角)
         if not st["moved"] and (can.cmd_v >= 0.05 or (int(st["t"] * 50) % 5 == 0 and os.path.exists("/tmp/plant_go"))):
             st["moved"] = True
-        tgt = max(-CFG["STEER_MAX"], min(CFG["STEER_MAX"], can.cmd_steer if st["moved"] else st["steer"]))
+        lim_l = CFG["STEER_MAX_L"] if CFG["STEER_MAX_L"] is not None else CFG["STEER_MAX"]
+        lim_r = CFG["STEER_MAX_R"] if CFG["STEER_MAX_R"] is not None else CFG["STEER_MAX"]
+        want = can.cmd_steer if st["moved"] else st["steer"]
+        if CFG["LATCH"]:
+            lt = st.get("latch")
+            at_lim = lt is not None and ((lt > st["steer"] and st["steer"] >= lim_l - 0.05) or
+                                         (lt < st["steer"] and st["steer"] <= -lim_r + 0.05))
+            if lt is None or abs(lt - st["steer"]) <= CFG["LATCH_TOL"] or at_lim or not st["moved"]:
+                st["latch"] = want
+            want = st["latch"]
+        tgt = max(-lim_r, min(lim_l, want))
         dmax = CFG["STEER_RATE"] * dt
         st["steer"] += max(-dmax, min(dmax, tgt - st["steer"]))
         # 车速. 测试脚本可写 /tmp/plant_vrun 切换实际车速 (运输 / 作业), 每 0.1 s 读一次

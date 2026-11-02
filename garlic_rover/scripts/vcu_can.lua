@@ -47,6 +47,10 @@
    起步回正 VCU_STR_TOL: 车静止要起步时先把前轮回正, 实际转角 (MotionSta) 偏离正中超过此值就发 v=0 等前轮
    停车回正 VCU_STR_PARK: 不在行驶状态时转角指令回 0, 下次起步不带着上次的转角
    零位补偿 VCU_STR_OFS: 叠加到下发的转角上 (bin 反算 VCU 报 0 时前轮实际偏左约 1.5 度, 需实车标定)
+   小步增量 VCU_STR_STEP: VCU 转向按"锁定目标"执行 (转到目标或机械极限后才接受新指令, 甲方 11-02 确认),
+     直接发期望转角时目标一旦远或到不了, 前轮要单向转好几秒才换指令 -> 起步绕圈 (issue #11).
+     下发转角 = VCU 回报实际转角 + 朝期望方向最多 VCU_STR_STEP 度, 目标总能很快到位, 等效连续跟随;
+     MotionSta 不新鲜时直接发期望转角. 日志 VCU.CD 为实际下发值, VCUW.DD 为期望值 (含零位补偿)
 
  所需参数(与 garlic_rover/params/garlic_rover.param 一致):
    SCR_ENABLE=1  CAN_P2_DRIVER=2  CAN_D2_PROTOCOL=10  CAN_P2_BITRATE=500000
@@ -101,7 +105,7 @@ local CAPS = 0x03             -- bit0 速度/方向 + bit1 作业电机(仅启�
 -- 表大小上电后固定: 加了参数的脚本换上后要重启飞控, 只重启脚本会报 could not add param table
 ---------------------------------------------------------------------------
 local PARAM_TABLE_KEY = 71
-assert(param:add_table(PARAM_TABLE_KEY, "VCU_", 16), "VCU: could not add param table")
+assert(param:add_table(PARAM_TABLE_KEY, "VCU_", 17), "VCU: could not add param table")
 local function bind_add_param(name, idx, default)
   assert(param:add_param(PARAM_TABLE_KEY, idx, name, default), "VCU: could not add param " .. name)
   return Parameter("VCU_" .. name)
@@ -132,12 +136,16 @@ local VCU_VREF_MIN = bind_add_param("VREF_MIN", 11, 0.3)
 local VCU_FB_CHK = bind_add_param("FB_CHK", 12, 0)
 --[[ @Param: VCU_VREF_SRC  @DisplayName: 转角换算用的实际车速来源: 0 MotionSta 回报车速 (新鲜时), 1 AHRS 前向速度 (RTK). 实车 VCU 回报车速封顶约 0.85 m/s, 用 1  @Values: 0:VCU回报,1:AHRS --]]
 local VCU_VREF_SRC = bind_add_param("VREF_SRC", 13, 1)
+-- 转向适配参数放在一个表里: ArduPilot 的 Lua 每个函数最多 100 个局部变量, 脚本最外层已接近上限
+local STR = {}
 --[[ @Param: VCU_STR_TOL  @DisplayName: 起步回正(度): 车静止要起步时先把前轮回正, 实际转角(MotionSta)偏离正中超过此值就不给车速; 0=不等  @Units: deg --]]
-local VCU_STR_TOL = bind_add_param("STR_TOL", 14, 5)
+STR.TOL = bind_add_param("STR_TOL", 14, 5)
 --[[ @Param: VCU_STR_PARK  @DisplayName: 停车回正: 1 不在行驶状态(未解锁/非自动模式)时转角指令回 0; 0 保持上次转角  @Values: 0:保持,1:回正 --]]
-local VCU_STR_PARK = bind_add_param("STR_PARK", 15, 1)
+STR.PARK = bind_add_param("STR_PARK", 15, 1)
 --[[ @Param: VCU_STR_OFS  @DisplayName: 转角零位补偿(度, 左正): 叠加到下发的转角指令上, 补偿前轮零位偏差  @Units: deg --]]
-local VCU_STR_OFS = bind_add_param("STR_OFS", 16, 0)
+STR.OFS = bind_add_param("STR_OFS", 16, 0)
+--[[ @Param: VCU_STR_STEP  @DisplayName: 转角小步增量(度): 下发转角 = VCU 回报实际转角 + 朝期望方向最多此值 (VCU 锁定目标式转向的适配); 须大于 VCU 到位容差; 0=直接发期望转角  @Units: deg --]]
+STR.STEP = bind_add_param("STR_STEP", 17, 2)
 
 ---------------------------------------------------------------------------
 -- CAN
@@ -512,7 +520,7 @@ local function update()
   local ahrs_v = ahrs_fwd_speed()
   local v_ref = math.max(math.abs(actual_speed(now, ahrs_v)), VCU_VREF_MIN:get(), 0.05)
   local steer_deg = last_steer_deg
-  if not driving and VCU_STR_PARK:get() > 0 then
+  if not driving and STR.PARK:get() > 0 then
     steer_deg = 0
     last_steer_deg = 0
   end
@@ -525,11 +533,11 @@ local function update()
   end
   -- 起步回正: 车静止时先把前轮回到正中, 偏差在 VCU_STR_TOL 内才给车速 (VCU 转向约 4.5 deg/s, 起步约 1 s 即到
   -- 1 m/s 以上, 前轮不正就会带着转角冲出去). 静止时按 VREF_MIN 换算的转角没有意义, 不去对准它
-  local tol = VCU_STR_TOL:get()
+  local tol = STR.TOL:get()
   if tol > 0 and math.abs(v) > 0.01 and math.abs(ahrs_v) < 0.1 and motion.ms > 0 and now - motion.ms <= MOTION_FRESH_MS then
     steer_deg = 0
     last_steer_deg = 0
-    if math.abs(VCU_STR_OFS:get() - motion.steer_deg) > tol then
+    if math.abs(STR.OFS:get() - motion.steer_deg) > tol then
       v = 0
     end
   end
@@ -554,9 +562,16 @@ local function update()
 
   -- 授权期间 50ms 周期发送, 断流 >100ms 会被 VCU 收权; 授权沿立即发第一帧
   if authorized and not was_authorized then last_tx_ms = 0 end
+  -- 小步增量: 下发目标只比 VCU 回报的实际转角多走 VCU_STR_STEP 度 (VCU 到位才接受新指令, issue #11)
+  local steer_want = steer_deg + STR.OFS:get()
+  local steer_cmd = steer_want
+  local step = STR.STEP:get()
+  if step > 0 and motion.ms > 0 and now - motion.ms <= MOTION_FRESH_MS then
+    steer_cmd = motion.steer_deg + clamp(steer_want - motion.steer_deg, -step, step)
+  end
   if authorized and now - last_tx_ms >= TX_PERIOD_MS then
     last_tx_ms = now
-    send_nav_cmd(v, steer_deg + VCU_STR_OFS:get(), work_on, navsta.seq)
+    send_nav_cmd(v, steer_cmd, work_on, navsta.seq)
   end
   was_authorized = authorized
 
@@ -566,14 +581,14 @@ local function update()
   if now - last_log_ms >= 20 then
     last_log_ms = now
     logger:write("VCU", "CV,CD,AV,AD,Op,HS,Er,VS,FS,Ok,Fix,WF,VR,AS", "ffffBBBBBBBBff",
-                 v, steer_deg, motion.v, motion.steer_deg,
+                 v, steer_cmd, motion.v, motion.steer_deg,
                  navsta_valid and navsta.op or 0, navsta_valid and navsta.hs or 0,
                  navsta.err, clamp(motion.veh, 0, 255), motion.failsafe and 1 or 0,
                  ok and 1 or 0, fix, navsta.wfb, v_ref, ahrs_v)
     -- SF = HealthSta Sys_Fault, DF/DC = 驱动器故障码及路号 (HealthSta 最近一帧, 不看新鲜度)
     local drv, drv_ch = drive_fault()
-    logger:write("VCUW", "WR,WO,SF,DF,DC", "BBBBB", work_req and 1 or 0, work_on and 1 or 0,
-                 health.sys, drv, drv_ch)
+    logger:write("VCUW", "WR,WO,SF,DF,DC,DD", "BBBBBf", work_req and 1 or 0, work_on and 1 or 0,
+                 health.sys, drv, drv_ch, steer_want)
   end
 
   -- 5Hz 上报地面站 (客户地面站只用这 5 个值, 4G 按流量计费)
