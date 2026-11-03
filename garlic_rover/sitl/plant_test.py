@@ -134,3 +134,18 @@ for d in range(0, int(LEN) + 1, 4):
     j = min(range(len(along)), key=lambda i: abs(along[i] - d))
     prof.append("%d:%+.2f" % (d, xt[j]))
 print("PROFILE 沿线距离:偏差(右正) " + " ".join(prof))
+print("START 起步时前轮 %.1f°" % rows[i0][5])
+# 模型 STALL_S>0 时 (日志第 9 列): 停顿结束后多久重新给车速, 车有没有重新开起来
+stall = [i for i, r in enumerate(rows) if len(r) > 8 and r[8]]
+if stall:
+    j = stall[-1] + 1
+    t_end = rows[j][0] if j < len(rows) else rows[-1][0]
+    after = [r for r in rows[j:] if r[0] - t_end <= 6.0]
+    resume = next((r[0] - t_end for r in after if r[6] >= 0.05), None)
+    moved = next((r[0] - t_end for r in after if r[4] > 0.3), None)
+    # 停顿开始到结束后 3 s 内, 车速指令被压成 0 的时长 (日志 20 Hz)
+    win = [r for r in rows if rows[stall[0]][0] <= r[0] <= t_end + 3.0]
+    zero_s = sum(1 for r in win if r[6] < 0.01) * 0.05
+    print("STALL 停顿 %.1f s，停顿中前轮 %.1f° | 停顿起到停顿后 3 s 车速指令为 0 共 %.1f s | 停顿后重新给车速 %s | 重新开起来 %s" % (
+        rows[stall[-1]][0] - rows[stall[0]][0], rows[stall[-1]][5], zero_s,
+        "%.1f s" % resume if resume is not None else "无", "%.1f s" % moved if moved is not None else "无"))

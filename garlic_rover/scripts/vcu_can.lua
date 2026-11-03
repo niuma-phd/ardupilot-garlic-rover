@@ -44,7 +44,8 @@
    delta 限幅 min(45deg, deg(atan(L/TURN_RADIUS))), 指令 |v|<0.05m/s 时保持上次转角
 
  前轮转向慢 (实车约 4.5 deg/s, 起步约 1 s 即到 1 m/s 以上, 2026-11-01 bin) 的适配, 只看转角不看车速:
-   起步回正 VCU_STR_TOL: 车静止要起步时先把前轮回正, 实际转角 (MotionSta) 偏离正中超过此值就发 v=0 等前轮
+   起步回正 VCU_STR_TOL: 车静止要起步时先把前轮回正, 实际转角 (MotionSta) 偏离正中超过此值就发 v=0 等前轮;
+     只在起步时检查, 车开起来以后中途停顿不再回正 (车速指令归 0 后才算重新起步)
    停车回正 VCU_STR_PARK: 不在行驶状态时转角指令回 0, 下次起步不带着上次的转角
    零位补偿 VCU_STR_OFS: 叠加到下发的转角上 (bin 反算 VCU 报 0 时前轮实际偏左约 1.5 度, 需实车标定)
    小步增量 VCU_STR_STEP: VCU 转向按"锁定目标"执行 (转到目标或机械极限后才接受新指令, 甲方 11-02 确认),
@@ -138,7 +139,7 @@ local VCU_FB_CHK = bind_add_param("FB_CHK", 12, 0)
 local VCU_VREF_SRC = bind_add_param("VREF_SRC", 13, 1)
 -- 转向适配参数放在一个表里: ArduPilot 的 Lua 每个函数最多 100 个局部变量, 脚本最外层已接近上限
 local STR = {}
---[[ @Param: VCU_STR_TOL  @DisplayName: 起步回正(度): 车静止要起步时先把前轮回正, 实际转角(MotionSta)偏离正中超过此值就不给车速; 0=不等  @Units: deg --]]
+--[[ @Param: VCU_STR_TOL  @DisplayName: 起步回正(度): 车静止要起步时先把前轮回正, 实际转角(MotionSta)偏离正中超过此值就不给车速, 只在起步时检查, 行驶中停顿不检查; 0=不等  @Units: deg --]]
 STR.TOL = bind_add_param("STR_TOL", 14, 5)
 --[[ @Param: VCU_STR_PARK  @DisplayName: 停车回正: 1 不在行驶状态(未解锁/非自动模式)时转角指令回 0; 0 保持上次转角  @Values: 0:保持,1:回正 --]]
 STR.PARK = bind_add_param("STR_PARK", 15, 1)
@@ -533,8 +534,15 @@ local function update()
   end
   -- 起步回正: 车静止时先把前轮回到正中, 偏差在 VCU_STR_TOL 内才给车速 (VCU 转向约 4.5 deg/s, 起步约 1 s 即到
   -- 1 m/s 以上, 前轮不正就会带着转角冲出去). 静止时按 VREF_MIN 换算的转角没有意义, 不去对准它
+  -- 只管起步: 车速指令归 0 (停车 / 不在行驶状态) 后算重新起步, 车开起来 (AHRS >= 0.3 m/s) 后不再检查.
+  -- 行驶中车停顿一下 (作业拖地 / 打滑) 不算起步, 否则前轮不正就把车速压成 0 -> Crash (1103 外场作业段 3 次)
+  if math.abs(v) <= 0.01 then
+    STR.rolled = false
+  elseif math.abs(ahrs_v) >= 0.3 then
+    STR.rolled = true
+  end
   local tol = STR.TOL:get()
-  if tol > 0 and math.abs(v) > 0.01 and math.abs(ahrs_v) < 0.1 and motion.ms > 0 and now - motion.ms <= MOTION_FRESH_MS then
+  if tol > 0 and not STR.rolled and math.abs(v) > 0.01 and math.abs(ahrs_v) < 0.1 and motion.ms > 0 and now - motion.ms <= MOTION_FRESH_MS then
     steer_deg = 0
     last_steer_deg = 0
     if math.abs(STR.OFS:get() - motion.steer_deg) > tol then

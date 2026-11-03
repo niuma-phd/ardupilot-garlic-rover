@@ -4,11 +4,16 @@
 SITL 里车不再按 ArduPilot 舵机输出动, 而是像实车一样只听 vcu_can.lua 发的 Nav_Cmd
 (目标车速 / 前轮转角), 按实车日志 (2026-11-01 bin) 测得的 VCU 特性运动:
   - 前轮转角按 STEER_RATE (4.5 deg/s) 限速追指令, 限幅 STEER_MAX (25 deg); 左右不同时用 STEER_MAX_L / STEER_MAX_R
-  - LATCH=1: 锁定目标式转向 (实车 VCU, 甲方 11-02 确认): 转到锁定目标 (LATCH_TOL 内) 或机械极限后才接受最新指令
+  - LATCH=1: 锁定目标式转向 (实车 VCU, 甲方 11-02 确认): 转到锁定目标 (LATCH_TOL 内) 或机械极限后才接受最新指令,
+    到位后新目标离当前位置不超过 MIN_ACT 不动 (1103 bin 拟合: LATCH_TOL 2, MIN_ACT 3, STEER_RATE 3.5)
+  - TGT_OFS: VCU 按自己的中位执行指令, 回报原始角度: 指令 T -> 执行器(回报)转到 T+TGT_OFS (1102/1103 bin: -1.8).
+    配 STEER_K=1 STEER_OFS=1.8 即"前轮正时回报 -1.8"
   - 车速: SPEED_MODE=run 时有指令 (>=0.05) 就跑 V_RUN (1.7 m/s), 不随指令大小变 (实车如此);
           SPEED_MODE=follow 时跟随指令车速. 加速 ACCEL (2.5), 减速 DECEL (4.5) m/s^2
   - 有效转角 = STEER_K (1.1) * 回报转角 + STEER_OFS (1.5 deg, 左正), 自行车模型轴距 WBASE (1.2 m)
   - MotionSta 回报车速封顶 AV_CAP (0.85 m/s), 回报转角为执行器转角
+  - STALL_S>0: 车开起来 STALL_AT 秒后停顿 STALL_S 秒 (车速 0, 模拟作业拖地 / 打滑, 1103 外场),
+    停顿期间前轮停在 STALL_STEER (不设则照常追指令); 日志第 9 列为停顿标志
 NavSta 始终为 无人授权 (Op=2, HS=3, Seq=7), WorkFb=0.
 
 用法: garlic_plant.py [key=value ...]  如 SPEED_MODE=follow STEER0=-25
@@ -16,7 +21,8 @@ NavSta 始终为 无人授权 (Op=2, HS=3, Seq=7), WorkFb=0.
 import json, math, os, socket, struct, sys, threading, time
 
 CFG = dict(STEER_RATE=4.5, STEER_MAX=25.0, STEER_MAX_L=None, STEER_MAX_R=None, LATCH=0.0, LATCH_TOL=0.5, SPEED_MODE="run", V_RUN=1.7, ACCEL=2.5, DECEL=4.5,
-           STEER_K=1.1, STEER_OFS=1.5, WBASE=1.2, AV_CAP=0.85, STEER0=0.0, YAW0=None, LOG="", PORT=9012)
+           STEER_K=1.1, STEER_OFS=1.5, WBASE=1.2, AV_CAP=0.85, STEER0=0.0, YAW0=None, LOG="", PORT=9012,
+           STALL_AT=0.0, STALL_S=0.0, STALL_STEER=None, TGT_OFS=0.0, MIN_ACT=0.0)
 for a in sys.argv[1:]:
     k, v = a.split("=", 1)
     CFG[k] = v if k in ("SPEED_MODE", "LOG") else float(v)
@@ -99,13 +105,16 @@ def main():
             st["moved"] = True
         lim_l = CFG["STEER_MAX_L"] if CFG["STEER_MAX_L"] is not None else CFG["STEER_MAX"]
         lim_r = CFG["STEER_MAX_R"] if CFG["STEER_MAX_R"] is not None else CFG["STEER_MAX"]
-        want = can.cmd_steer if st["moved"] else st["steer"]
+        want = can.cmd_steer + CFG["TGT_OFS"] if st["moved"] else st["steer"]
         if CFG["LATCH"]:
             lt = st.get("latch")
             at_lim = lt is not None and ((lt > st["steer"] and st["steer"] >= lim_l - 0.05) or
                                          (lt < st["steer"] and st["steer"] <= -lim_r + 0.05))
-            if lt is None or abs(lt - st["steer"]) <= CFG["LATCH_TOL"] or at_lim or not st["moved"]:
+            if lt is None or not st["moved"]:
                 st["latch"] = want
+            elif abs(lt - st["steer"]) <= CFG["LATCH_TOL"] or at_lim:
+                # 到位 (或到极限) 后停在原地, 新目标离当前位置超过 MIN_ACT 才接受
+                st["latch"] = want if abs(want - st["steer"]) > CFG["MIN_ACT"] else st["steer"]
             want = st["latch"]
         tgt = max(-lim_r, min(lim_l, want))
         dmax = CFG["STEER_RATE"] * dt
@@ -126,6 +135,14 @@ def main():
         dv = max(-lim, min(lim, dv))
         st["a"] = dv / dt if dt > 0 else 0.0
         st["v"] = max(0.0, st["v"] + dv)
+        if st.get("t_go") is None and st["v"] > 0.01:
+            st["t_go"] = st["t"]
+        stall = (CFG["STALL_S"] > 0 and st.get("t_go") is not None
+                 and CFG["STALL_AT"] <= st["t"] - st["t_go"] < CFG["STALL_AT"] + CFG["STALL_S"])
+        if stall:
+            st["v"], st["a"] = 0.0, 0.0
+            if CFG["STALL_STEER"] is not None:
+                st["steer"] = CFG["STALL_STEER"]
         # 自行车模型 (转角左正, 航向顺时针正)
         eff = math.radians(CFG["STEER_K"] * st["steer"] + CFG["STEER_OFS"])
         st["r"] = -st["v"] * math.tan(eff) / CFG["WBASE"] if st["v"] > 0.001 else 0.0
@@ -150,8 +167,8 @@ def main():
                 can.send(ID_STA, [2, 3, 7, 0, 0, 0, 0, 0])
             can.send(ID_MOTION, i16(min(st["v"], CFG["AV_CAP"]) * 100) + i16(st["steer"] * 100) + bytes([0, 2, 0, 0]))
             if logf:
-                logf.write("%.2f %.3f %.3f %.2f %.3f %.2f %.3f %.2f\n" % (
-                    st["t"], st["n"], st["e"], math.degrees(st["yaw"]), st["v"], st["steer"], cv, can.cmd_steer))
+                logf.write("%.2f %.3f %.3f %.2f %.3f %.2f %.3f %.2f %d\n" % (
+                    st["t"], st["n"], st["e"], math.degrees(st["yaw"]), st["v"], st["steer"], cv, can.cmd_steer, stall))
                 logf.flush()
 
 

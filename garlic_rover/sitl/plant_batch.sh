@@ -6,6 +6,6 @@ while IFS='|' read -r name lua pargs scene fargs; do
   [ -z "$name" ] && continue
   case "$name" in \#*) continue;; esac
   echo "=== $name"
-  bash "$HERE/run_plant.sh" "$lua" "$pargs" "$scene" $fargs | grep -E "RESULT|PROFILE|\[text\] (VCU|Crash)"
+  bash "$HERE/run_plant.sh" "$lua" "$pargs" "$scene" $fargs | grep -E "RESULT|PROFILE|START|STALL|\[text\] (VCU|Crash)"
   cp ~/plant_test/plant.log ~/plant_runs/"$name".log 2>/dev/null
 done < "$1"
