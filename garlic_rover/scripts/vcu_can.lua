@@ -51,7 +51,9 @@
    小步增量 VCU_STR_STEP: VCU 转向按"锁定目标"执行 (转到目标或机械极限后才接受新指令, 甲方 11-02 确认),
      直接发期望转角时目标一旦远或到不了, 前轮要单向转好几秒才换指令 -> 起步绕圈 (issue #11).
      下发转角 = VCU 回报实际转角 + 朝期望方向最多 VCU_STR_STEP 度, 目标总能很快到位, 等效连续跟随;
-     MotionSta 不新鲜时直接发期望转角. 日志 VCU.CD 为实际下发值, VCUW.DD 为期望值 (含零位补偿)
+     MotionSta 不新鲜时直接发期望转角. 日志 VCU.CD 为实际下发值, VCUW.DD 为期望值 (含零位补偿和变化率限制)
+   变化率限制 VCU_STR_RATE: 下发转角每秒最多变化此值 (度/秒), 按前轮转向速度设. 低速时转角换算放大导航的小波动,
+     不限的话下发转角在左右极限间乱跳 (1104 bin). 按前轮角度限, 和车速无关; 换转向机构后改成新机构的转速
 
  所需参数(与 garlic_rover/params/garlic_rover.param 一致):
    SCR_ENABLE=1  CAN_P2_DRIVER=2  CAN_D2_PROTOCOL=10  CAN_P2_BITRATE=500000
@@ -106,7 +108,7 @@ local CAPS = 0x03             -- bit0 速度/方向 + bit1 作业电机(仅启�
 -- 表大小上电后固定: 加了参数的脚本换上后要重启飞控, 只重启脚本会报 could not add param table
 ---------------------------------------------------------------------------
 local PARAM_TABLE_KEY = 71
-assert(param:add_table(PARAM_TABLE_KEY, "VCU_", 17), "VCU: could not add param table")
+assert(param:add_table(PARAM_TABLE_KEY, "VCU_", 18), "VCU: could not add param table")
 local function bind_add_param(name, idx, default)
   assert(param:add_param(PARAM_TABLE_KEY, idx, name, default), "VCU: could not add param " .. name)
   return Parameter("VCU_" .. name)
@@ -146,7 +148,9 @@ STR.PARK = bind_add_param("STR_PARK", 15, 1)
 --[[ @Param: VCU_STR_OFS  @DisplayName: 转角零位补偿(度, 左正): 叠加到下发的转角指令上, 补偿前轮零位偏差  @Units: deg --]]
 STR.OFS = bind_add_param("STR_OFS", 16, 0)
 --[[ @Param: VCU_STR_STEP  @DisplayName: 转角小步增量(度): 下发转角 = VCU 回报实际转角 + 朝期望方向最多此值 (VCU 锁定目标式转向的适配); 须大于 VCU 到位容差; 0=直接发期望转角  @Units: deg --]]
-STR.STEP = bind_add_param("STR_STEP", 17, 2)
+STR.STEP = bind_add_param("STR_STEP", 17, 0)
+--[[ @Param: VCU_STR_RATE  @DisplayName: 转角变化率限制(度/秒): 下发转角每秒最多变化这么多, 按前轮转向速度设 (现机构约 4); 换转向机构后改成新机构的转速; 0=不限  @Units: deg/s --]]
+STR.RATE = bind_add_param("STR_RATE", 18, 4)
 
 ---------------------------------------------------------------------------
 -- CAN
@@ -572,6 +576,14 @@ local function update()
   if authorized and not was_authorized then last_tx_ms = 0 end
   -- 小步增量: 下发目标只比 VCU 回报的实际转角多走 VCU_STR_STEP 度 (VCU 到位才接受新指令, issue #11)
   local steer_want = steer_deg + STR.OFS:get()
+  -- 转角变化率限制 VCU_STR_RATE: 低速时 delta = atan(a_lat*L/v^2) 把导航横向加速度的小波动放大成几度的跳动
+  -- (1104 bin: 0.35 m/s 下 0.2 s 跳 3~4 度, 下发转角每秒越过 +-3 度约 7 次, 前轮满舵来回), 按前轮能跟上的速度限
+  local rate = STR.RATE:get()
+  if rate > 0 and STR.rl_ms ~= nil then
+    local dmax = rate * (now - STR.rl_ms) * 0.001
+    steer_want = clamp(steer_want, STR.rl_deg - dmax, STR.rl_deg + dmax)
+  end
+  STR.rl_deg, STR.rl_ms = steer_want, now
   local steer_cmd = steer_want
   local step = STR.STEP:get()
   if step > 0 and motion.ms > 0 and now - motion.ms <= MOTION_FRESH_MS then
